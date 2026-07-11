@@ -216,3 +216,22 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Environment Variables (⚠️ 중요! API 키 보호)
+.env
+.env.local
+.env.*.local
+
+# Data files
+data/raw/*.csv
+data/processed/*.csv
+*.db
+
+# Logs
+*.log
+logs/
+
+
+
+
+
