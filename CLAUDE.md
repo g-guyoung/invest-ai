@@ -33,9 +33,10 @@ Binance 데이터를 수집하고 AI(Claude API)가 분석하여 BUY/SELL/HOLD +
 
 ```
 src/
- ├── fetcher/     # 거래소 데이터 수집기
- ├── engine/      # AI 분석 엔진
- └── dashboard.py
+ ├── fetcher/     # 거래소 데이터 수집기 (binance_fetcher.py)
+ ├── engine/      # AI 분석 엔진 (indicators.py, base_analyzer.py, claude_analyzer.py)
+ ├── common/      # 공통 유틸 (retry.py 등, 여러 모듈이 공유하는 로직)
+ └── dashboard.py # Streamlit 대시보드 (실 사용 화면)
 tests/
 config/
 data/
@@ -69,9 +70,20 @@ CLAUDE.md
 
 - Phase 1 (스캐폴딩): 완료
 - Phase 2 Part 1 (Binance OHLCV 수집기 `src/fetcher/binance_fetcher.py` + 테스트): 완료
-- Phase 3 (Claude API 기반 AI 분석 엔진): 예정
-- Phase 4 (대시보드): 예정
+- Phase 3 (AI 분석 엔진): 완료
+  - `src/engine/indicators.py` — RSI/MACD/이동평균/볼린저밴드/스토캐스틱/OBV/ATR 등 기술적 지표
+  - `src/engine/base_analyzer.py` — BaseAnalyzer 인터페이스 + AnalysisResult(Pydantic) 스키마 (Multi AI 확장 대비)
+  - `src/engine/claude_analyzer.py` — ClaudeAnalyzer (Claude API 기반 BUY/SELL/HOLD + Confidence + Reason + Risk Score)
+  - `src/common/retry.py` — 재시도 로직 공통화 (fetcher/analyzer 공유, DRY)
+  - 테스트 22개 전체 통과 (fetcher 8 + indicators 6 + analyzer 8)
+- Phase 4 MVP (대시보드): 완료 — `src/dashboard.py` (Streamlit), `streamlit run src/dashboard.py`로 실행
 - Phase 5 (자동매매 확장): 예정
+- Phase 6 (대시보드 고도화)/Phase 7(Multi AI)/Phase 8(모니터링)/Phase 9(배포)/Phase 10(운영): 예정
+
+### 실행 전 확인 사항
+- `.env`에 `ANTHROPIC_API_KEY` 채워야 AI 분석이 동작한다 (현재 비어 있음 — 사용자가 직접 채워야 함).
+- 샌드박스 환경은 외부 네트워크(Binance API, Anthropic API)가 막혀 있어 실제 데이터로는 로컬 PC에서만 검증 가능.
+  코드 자체는 mock 기반 pytest로 전량 검증됨.
 
 ## 7. 참고 자료
 

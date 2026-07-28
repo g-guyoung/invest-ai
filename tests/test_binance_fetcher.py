@@ -60,8 +60,12 @@ class _FakeSession:
 
 @pytest.fixture(autouse=True)
 def _no_real_sleep(monkeypatch):
-    """재시도 테스트가 실제로 대기하지 않도록 time.sleep을 무력화한다."""
-    monkeypatch.setattr("src.fetcher.binance_fetcher.time.sleep", lambda _: None)
+    """재시도 테스트가 실제로 대기하지 않도록 time.sleep을 무력화한다.
+
+    재시도 로직은 src.common.retry.retry_with_backoff 로 공통화되어 있으므로
+    그 모듈의 time.sleep을 무력화한다.
+    """
+    monkeypatch.setattr("src.common.retry.time.sleep", lambda _: None)
 
 
 # ── 정상 케이스 ──────────────────────────────────────────────

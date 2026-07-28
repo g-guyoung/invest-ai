@@ -16,7 +16,6 @@ Binance 공개 REST API를 이용한 OHLCV 데이터 수집기.
 from __future__ import annotations
 
 import sys
-import time
 import logging
 from pathlib import Path
 from typing import Optional
@@ -38,6 +37,7 @@ from config.settings import (
     DEFAULT_BACKOFF_SECONDS,
     DATA_DIR,
 )
+from src.common.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -102,25 +102,25 @@ class BinanceFetcher:
             BinanceFetcherError: max_retries 회 모두 실패했을 때.
         """
         url = f"{self.base_url}{endpoint}"
-        last_error: Optional[Exception] = None
 
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                response = self.session.get(url, params=params, timeout=10)
-                response.raise_for_status()
-                return response.json()
-            except (requests.RequestException, ValueError) as exc:
-                last_error = exc
-                logger.warning(
-                    "Binance 요청 실패 (시도 %d/%d): %s",
-                    attempt, self.max_retries, exc,
-                )
-                if attempt < self.max_retries:
-                    time.sleep(self.backoff_seconds * (2 ** (attempt - 1)))
+        def _do_request():
+            response = self.session.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            return response.json()
 
-        raise BinanceFetcherError(
-            f"Binance API 요청이 {self.max_retries}회 모두 실패했습니다: {last_error}"
-        ) from last_error
+        try:
+            return retry_with_backoff(
+                _do_request,
+                max_retries=self.max_retries,
+                backoff_seconds=self.backoff_seconds,
+                retry_exceptions=(requests.RequestException, ValueError),
+                logger=logger,
+                action_name="Binance 요청",
+            )
+        except (requests.RequestException, ValueError) as exc:
+            raise BinanceFetcherError(
+                f"Binance API 요청이 {self.max_retries}회 모두 실패했습니다: {exc}"
+            ) from exc
 
     def get_klines(
         self,
@@ -148,6 +148,8 @@ class BinanceFetcher:
         """
         if not symbol:
             raise BinanceFetcherError("symbol은 비어 있을 수 없습니다.")
+        if not 1 <= limit <= 1000:
+            raise BinanceFetcherError(f"limit은 1~1000 사이여야 합니다 (입력값: {limit}).")
 
         params = {"symbol": symbol.upper(), "interval": interval, "limit": limit}
         if start_time is not None:
