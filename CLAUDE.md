@@ -51,8 +51,13 @@ CLAUDE.md
 기능 완료 시 커밋 메시지만 제안하고 끝내지 않는다. **매번 실제로 `git add` → `git commit`까지 직접 실행한다**
 (사용자에게 다시 확인받지 않는다). 커밋 메시지 형식: `[PhaseN][PartM] 설명`. 예: `[Phase2][Part1] Binance 데이터 수집기 구현`
 
-원격 저장소(GitHub 등)가 연결되어 있으면 `git push`까지 수행한다. 아직 원격이 연결되어 있지 않다면
-push는 생략하고, 응답 마지막에 원격 연결이 필요하다는 점만 짧게 언급한다.
+원격 저장소는 `https://github.com/g-guyoung/invest-ai.git` (origin/main)에 연결되어 있다.
+인증 토큰은 `.env`의 `GITHUB_TOKEN`에 저장되어 있으므로, 매 기능 완료 시 커밋 후
+`git push https://${GITHUB_TOKEN}@github.com/g-guyoung/invest-ai.git main:main` 형태로 실제 push까지 수행한다
+(사용자에게 다시 확인받지 않는다). `.env`는 `.gitignore`에 포함되어 있어 토큰이 커밋되지 않는다.
+
+이 저장소는 로컬 작업(2026-07-29)과 원격에 이미 있던 초기 커밋(1차 계획안, LICENSE 등)을
+`--allow-unrelated-histories`로 병합한 이력이 있다 — 로컬 구현 버전을 기준으로 하고 LICENSE만 원격에서 가져왔다.
 
 ## 5. 새 대화 시작 시 제목
 
