@@ -81,11 +81,25 @@ CLAUDE.md
 - Phase 6 (대시보드 고도화)/Phase 7(Multi AI)/Phase 8(모니터링)/Phase 9(배포)/Phase 10(운영): 예정
 
 ### 실행 전 확인 사항
-- `.env`에 `ANTHROPIC_API_KEY` 채워야 AI 분석이 동작한다 (현재 비어 있음 — 사용자가 직접 채워야 함).
-- 샌드박스 환경은 외부 네트워크(Binance API, Anthropic API)가 막혀 있어 실제 데이터로는 로컬 PC에서만 검증 가능.
-  코드 자체는 mock 기반 pytest로 전량 검증됨.
+- `.env`의 `ANTHROPIC_API_KEY` 설정 완료 (2026-07-29, 만료 없음(Never)으로 발급).
+- 샌드박스 환경은 외부 네트워크(Binance API, Anthropic API)가 막혀 있어 실제 데이터/실제 API 호출 검증은
+  로컬 PC에서만 가능. 코드 자체는 mock 기반 pytest로 전량 검증됨.
 
-## 7. 참고 자료
+## 7. 구글 드라이브 동기화
+
+`README.md`와 `CLAUDE.md`는 구글 드라이브의 "INVEST AI" 폴더에도 문서로 올려둔다.
+
+- 폴더: https://drive.google.com/drive/folders/10gCC7AUZ9iyyzBKJQA5h7vp5u5cT9o1O
+- 최초 업로드본(2026-07-29): README.md `1jScygtWIQzk7YeVoN0hLIaA3i_LF8DjGRdVw6N70y08`,
+  CLAUDE.md `1U-qCOXQcGBNoWnE-pc_49h6RQcNfgJxPJYmFNQJcYA4`
+
+**주의**: 현재 연결된 구글 드라이브 도구는 파일 생성만 가능하고 기존 문서를 덮어쓰거나 삭제하는 기능이 없다.
+따라서 "동기화"는 실시간 덮어쓰기가 아니라, **두 파일 중 하나라도 내용이 바뀌면 위 폴더 안에
+`README.md (YYYY-MM-DD)` / `CLAUDE.md (YYYY-MM-DD)` 형식으로 그날 날짜를 붙인 새 문서를 만드는 방식**으로
+동작한다 (사용자에게 다시 확인받지 않는다). 즉 폴더에는 시간순으로 여러 버전이 쌓이며, 가장 최근 날짜가
+붙은 문서가 최신본이다. 덮어쓰기/삭제 기능이 연결되면 이 방식은 개선한다.
+
+## 8. 참고 자료
 
 루트의 `프로젝트.pdf` / `발표자료_최종_20221169_김규영.pptx` — InvestAI 앱 기획서(학교 과제).
 `20221169 인공지능 최종 과제.py` — 개별 종목 매수/매도 판단 프로토타입(yfinance + RandomForest + TensorFlow).
