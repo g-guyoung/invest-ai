@@ -54,6 +54,11 @@ AI 신호를 생성하고 궁극적으로 **자동매매까지 수행하는 개�
    시장에 상관없이 OHLCV만 받으면 동작하도록 이미 설계되어 있음. 그대로 재사용, 수정 없음.
 4. **리스크 관리 레이어 신설** — Position Size, Stop Loss, Take Profit, Daily Loss Limit, Max Drawdown을
    브로커/신호 로직과 분리된 독립 모듈로 설계 (실거래 전환의 최종 안전장치).
+5. **기계학습(ML) 모델 병행** — 기존 학교 과제 프로토타입(`20221169 인공지능 최종 과제.py`, RandomForest + TensorFlow)의
+   피처 엔지니어링을 계승해, 지표 데이터를 학습된 ML 모델에도 통과시킨다. Claude(LLM 기반 정성 분석)와
+   ML 모델(정량 예측)을 병렬로 돌려 `AnalysisResult`에 함께 반영한다. **페이퍼 트레이딩 체결 결과를 다시
+   학습 데이터로 피드백**해서 1~2개월 검증 기간 동안 모델을 지속 재학습(retrain)한다 — "가상거래로 확실히
+   학습시키고 실거래 전환"이라는 목표를 이 피드백 루프로 구현.
 
 ---
 
@@ -72,9 +77,19 @@ AI 신호를 생성하고 궁극적으로 **자동매매까지 수행하는 개�
                                        │  OHLCV (공통 스키마)
                                        ▼
                          ┌─────────────────────────┐
-                         │   engine/ (기존 재사용)   │
-                         │ indicators → analyzer     │
-                         │ → AnalysisResult          │
+                         │  engine/indicators.py     │  기술적 지표 계산
+                         └─────────────┬─────────────┘
+                              ┌────────┴────────┐
+                              ▼                 ▼
+                  ┌───────────────────┐ ┌───────────────────┐
+                  │  ml/ (신규)        │ │ claude_analyzer.py │
+                  │  ML 모델 (정량 예측)│ │ Claude LLM (정성)   │
+                  │  RandomForest/TF   │ │                     │
+                  └─────────┬─────────┘ └─────────┬───────────┘
+                            └───────────┬──────────┘
+                                        ▼
+                         ┌─────────────────────────┐
+                         │      AnalysisResult       │
                          │ (signal/confidence/reason)│
                          └─────────────┬─────────────┘
                                        ▼
@@ -102,6 +117,8 @@ AI 신호를 생성하고 궁극적으로 **자동매매까지 수행하는 개�
                          │   Web App (신규 UI)       │
                          │ Invest AI 디자인 시스템    │
                          └─────────────────────────┘
+
+  ※ DB → ml/ 로 점선 피드백 루프 존재: 페이퍼 트레이딩 체결 결과가 쌓일수록 ML 모델을 주기적으로 재학습.
 ```
 
 ---
@@ -135,6 +152,22 @@ class PaperBroker(BrokerAdapter):
 # src/broker/toss_broker.py      → 미국주식 + 한국주식 (동일 API)
 # src/broker/upbit_broker.py     → 업비트
 # src/broker/binance_broker.py   → 바이낸스 (기존 fetcher 확장)
+
+
+# src/ml/model.py
+class MLModel:
+    """지표 데이터를 입력받아 정량적 매수/매도 확률을 예측하는 학습 모델.
+    Claude(정성 분석)와 병렬로 실행되어 AnalysisResult 생성에 함께 반영된다."""
+    def predict(self, features: pd.DataFrame) -> MLPrediction: ...
+
+
+# src/ml/train.py
+class ModelTrainer:
+    """PaperBroker 체결 결과(DB)를 학습 데이터로 사용해 MLModel을 주기적으로 재학습."""
+    def retrain(self, trade_history: list[TradeRecord]) -> MLModel: ...
+
+
+# src/ml/features.py  → indicators.py 출력을 학습용 피처로 변환 (기존 프로토타입 피처 엔지니어링 계승)
 ```
 
 `engine/base_analyzer.py`의 `BaseAnalyzer` / `AnalysisResult`는 변경 없이 그대로 사용 (시장 정보는
@@ -160,6 +193,7 @@ src/
  ├─ fetcher/        # 시장별 데이터 수집 (기존 binance_fetcher.py + 신규 toss_fetcher.py, upbit_fetcher.py)
  ├─ broker/         # [신규] base_broker.py, paper_broker.py, toss_broker.py, upbit_broker.py, binance_broker.py
  ├─ engine/         # 기존 유지 (indicators.py, base_analyzer.py, claude_analyzer.py) — 수정 없음
+ ├─ ml/             # [신규] model.py(예측), train.py(재학습), features.py(피처 엔지니어링)
  ├─ risk/           # [신규] position_sizing.py, stop_loss.py, daily_loss_limit.py
  ├─ common/         # 기존 유지 (retry.py)
  ├─ web/            # [신규] Flask 웹앱 (Phase 4 Streamlit 프로토타입 대체), Invest AI 디자인 시스템 적용
@@ -205,9 +239,23 @@ CLAUDE.md
 
 ---
 
-## 11. 다음 단계 (Phase 5 Part 1)
+## 11. 다음 단계 (Phase 5 로드맵)
 
-**목표**: `BrokerAdapter` 추상 인터페이스 + `PaperBroker` 구현 + pytest 테스트
+**Part 1**: `BrokerAdapter` 추상 인터페이스 + `PaperBroker` 구현 + pytest 테스트
+**Part 2**: `ml/` — 기존 학교 과제 프로토타입 피처 엔지니어링 계승한 `MLModel` 초기 학습 + `ModelTrainer` 재학습 루프
+**Part 3**: 웹 UI 리뉴얼 (Invest AI 디자인 시스템)
+**Part 4**: 토스 미국주식 연동
+**Part 5**: 토스 한국주식 연동
+**Part 6**: 업비트/바이낸스 연동
+**Part 7**: 클라우드 배포 + 실거래 전환 (1~2달 페이퍼 검증 후)
 
-이 작업부터 시작하는 것을 제안. 완료 후 순서대로 Part 2(웹 UI 리뉴얼) → Part 3(토스 미국주식) →
-Part 4(토스 한국주식) → Part 5(업비트/바이낸스) → Part 6(클라우드 배포+실거래 전환)로 진행.
+Part 1부터 시작하는 것을 제안.
+
+---
+
+## 12. FigJam 다이어그램
+
+Phase 5 설계를 아래 FigJam 보드에 시각화해 두었다 (시스템 아키텍처, IA/화면 플로우, ML 추가 버전).
+새 방향을 정할 때마다 이 보드를 계속 갱신한다 (CLAUDE.md 9번 항목 참고).
+
+- https://www.figma.com/board/1jZsBJwmNW6I6i4orviKNZ
