@@ -18,6 +18,9 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
@@ -157,28 +160,40 @@ with tab1:
 
     try:
         # Fetch data for all selected symbols
-        data_dict = {}
-        for symbol in selected_symbols:
+        @st.cache_data(ttl=3600)
+        def get_market_data(symbol, market_key, interval, limit, start_date, end_date):
+            """캐시된 시장 데이터 조회"""
             try:
-                df = FetcherRegistry.get_ohlcv(
+                return FetcherRegistry.get_ohlcv(
                     symbol=symbol,
                     market=market_key,
-                    interval=selected_interval,
-                    limit=fetch_limit,
-                    start_date=date_range[0].strftime("%Y-%m-%d")
-                    if len(date_range) > 0
-                    else None,
-                    end_date=date_range[1].strftime("%Y-%m-%d")
-                    if len(date_range) > 1
-                    else None,
+                    interval=interval,
+                    limit=limit,
+                    start_date=start_date,
+                    end_date=end_date,
                 )
-                if not df.empty:
-                    data_dict[symbol] = df
             except Exception as e:
-                st.error(f"❌ {symbol} 데이터 수집 실패: {str(e)}")
+                logger.error(f"데이터 조회 실패 {symbol}: {e}")
+                return None
+
+        data_dict = {}
+        for symbol in selected_symbols:
+            df = get_market_data(
+                symbol,
+                market_key,
+                selected_interval,
+                fetch_limit,
+                date_range[0].strftime("%Y-%m-%d") if len(date_range) > 0 else None,
+                date_range[1].strftime("%Y-%m-%d") if len(date_range) > 1 else None,
+            )
+            if df is not None and not df.empty:
+                data_dict[symbol] = df
+            else:
+                st.warning(f"⚠️ {symbol}: 데이터를 가져올 수 없습니다. (API 제한 또는 심볼 오류)")
 
         if not data_dict:
             st.error("❌ 선택한 심볼에 사용 가능한 데이터가 없습니다.")
+            st.info("💡 팁: 잠시 후 다시 시도하거나, 다른 심볼을 선택해주세요.")
             st.stop()
 
         # Create multi-line chart

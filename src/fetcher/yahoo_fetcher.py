@@ -55,8 +55,8 @@ class YahooFetcher(BaseFetcher):
         "HYUNDAI": "005380.KS",
         "KB": "105560.KS",
         "NAVER": "035720.KS",
-        "KAKAO": "035720.KS",  # Note: 카카오 홀딩스
-        "SAMSUNG_005930": "005930.KS",  # Allow full code input
+        "KAKAO": "035720.KS",
+        "SAMSUNG_005930": "005930.KS",
     }
 
     def __init__(self) -> None:
@@ -143,27 +143,36 @@ class YahooFetcher(BaseFetcher):
                     "Check the symbol (e.g. AAPL, ^GSPC, 005930.KS)."
                 )
 
-            # Reset index: converts DatetimeIndex to 'Date' column
+            # Reset index: converts DatetimeIndex to column
             df = df.reset_index()
-            # Rename 'Date' to 'open_time' before lowercasing
-            if 'Date' in df.columns:
-                df = df.rename(columns={'Date': 'open_time'})
-            # Convert all column names to lowercase
+
+            # Rename 'Date' to 'open_time' (case-sensitive)
+            column_mapping = {}
+            for col in df.columns:
+                if col.lower() == 'date':
+                    column_mapping[col] = 'open_time'
+            df = df.rename(columns=column_mapping)
+
+            # Convert all remaining column names to lowercase
             df.columns = df.columns.str.lower()
 
+            # Verify required columns
             required_cols = {"open_time", "open", "high", "low", "close", "volume"}
             missing = required_cols - set(df.columns)
             if missing:
+                logger.error(f"Available columns: {list(df.columns)}")
                 raise FetcherError(f"Missing required columns: {missing}")
 
-            df["open"] = df["open"].astype(float)
-            df["high"] = df["high"].astype(float)
-            df["low"] = df["low"].astype(float)
-            df["close"] = df["close"].astype(float)
-            df["volume"] = df["volume"].astype(float)
+            # Convert data types
+            numeric_cols = ["open", "high", "low", "close", "volume"]
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+
             df["open_time"] = pd.to_datetime(df["open_time"])
             df["symbol"] = symbol.upper()
 
+            # Return only required columns in correct order
             result = df[["open_time", "open", "high", "low", "close", "volume", "symbol"]]
             result = result.tail(limit).reset_index(drop=True)
 
@@ -173,5 +182,5 @@ class YahooFetcher(BaseFetcher):
         except FetcherError:
             raise
         except Exception as exc:
-            logger.error(f"Yahoo Finance fetch error: {exc}")
+            logger.error(f"Yahoo Finance fetch error for {symbol}: {exc}")
             raise FetcherError(f"Failed to fetch {symbol} from Yahoo Finance: {exc}") from exc
