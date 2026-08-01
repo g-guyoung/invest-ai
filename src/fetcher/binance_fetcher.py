@@ -38,6 +38,7 @@ from config.settings import (
     DATA_DIR,
 )
 from src.common.retry import retry_with_backoff
+from src.fetcher.base_fetcher import BaseFetcher, FetcherError
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +55,11 @@ _NUMERIC_COLUMNS = [
 ]
 
 
-class BinanceFetcherError(Exception):
+class BinanceFetcherError(FetcherError):
     """Binance 데이터 수집 과정에서 발생하는 모든 오류의 기반 클래스."""
 
 
-class BinanceFetcher:
+class BinanceFetcher(BaseFetcher):
     """Binance 공개 API로부터 OHLCV(캔들) 데이터를 수집하는 클래스.
 
     Attributes:
@@ -121,6 +122,54 @@ class BinanceFetcher:
             raise BinanceFetcherError(
                 f"Binance API 요청이 {self.max_retries}회 모두 실패했습니다: {exc}"
             ) from exc
+
+    def get_ohlcv(
+        self,
+        symbol: str,
+        interval: str = "1d",
+        limit: int = 500,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        BaseFetcher 인터페이스 구현.
+        날짜(YYYY-MM-DD) 기반 OHLCV 데이터 조회.
+
+        Args:
+            symbol: 거래 심볼 (예: "BTCUSDT").
+            interval: 캔들 간격 (예: "1m", "1h", "1d").
+            limit: 최대 수집 캔들 개수 (1~1000).
+            start_date: 조회 시작 날짜 (YYYY-MM-DD).
+            end_date: 조회 종료 날짜 (YYYY-MM-DD).
+
+        Returns:
+            columns=[open_time, open, high, low, close, volume, symbol]인 DataFrame.
+        """
+        start_time = None
+        end_time = None
+
+        if start_date:
+            start_time = int(
+                pd.to_datetime(start_date).timestamp() * 1000
+            )
+        if end_date:
+            end_time = int(
+                pd.to_datetime(end_date).timestamp() * 1000
+            )
+
+        df = self.get_klines(
+            symbol=symbol,
+            interval=interval,
+            limit=limit,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+        # BaseFetcher 표준 포맷으로 정규화
+        if not df.empty:
+            df = df[["open_time", "open", "high", "low", "close", "volume", "symbol"]]
+
+        return df
 
     def get_klines(
         self,
