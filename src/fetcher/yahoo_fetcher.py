@@ -46,6 +46,7 @@ class YahooFetcher(BaseFetcher):
     }
 
     # Korean stock symbol mapping (name -> code)
+    # 주의: 네이버(035420)와 카카오(035720)는 코드가 다르다.
     KOREAN_STOCKS = {
         "Samsung": "005930.KS",
         "SAMSUNG": "005930.KS",
@@ -54,7 +55,7 @@ class YahooFetcher(BaseFetcher):
         "LG": "066570.KS",
         "HYUNDAI": "005380.KS",
         "KB": "105560.KS",
-        "NAVER": "035720.KS",
+        "NAVER": "035420.KS",
         "KAKAO": "035720.KS",
         "SAMSUNG_005930": "005930.KS",
     }
