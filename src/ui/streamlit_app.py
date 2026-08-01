@@ -23,7 +23,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.fetcher.fetcher_registry import FetcherRegistry
-from src.engine.indicators import IndicatorCalculator
+from src.engine import indicators
 from src.engine.claude_analyzer import ClaudeAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 st.set_page_config(
-    page_title="Invest AI - Multi-Market Dashboard",
+    page_title="투자 AI - 멀티마켓 대시보드",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -61,61 +61,61 @@ st.markdown(
 # Sidebar: Market & Symbol Selection
 # ============================================================================
 
-st.sidebar.title("📊 Market & Symbol")
+st.sidebar.title("📊 시장 & 심볼")
 st.sidebar.divider()
 
 # Market selection
 selected_market = st.sidebar.selectbox(
-    "🌐 Select Market",
-    options=["Binance (Crypto)", "Yahoo (US/Korea Stocks)"],
+    "🌐 시장 선택",
+    options=["바이낸스 (암호화폐)", "야후 (미국/한국 주식)"],
     index=0,
 )
 
-market_key = "binance" if "Binance" in selected_market else "yahoo"
+market_key = "binance" if "바이낸스" in selected_market else "yahoo"
 
 # Symbol selection based on market
 if market_key == "binance":
     crypto_symbols = list(FetcherRegistry.CRYPTO_SYMBOLS.keys())
     selected_symbols = st.sidebar.multiselect(
-        "₿ Select Cryptocurrencies",
+        "₿ 암호화폐 선택",
         options=crypto_symbols,
         default=["BTC", "ETH"],
-        help="Select one or more cryptocurrencies to track.",
+        help="추적할 암호화폐를 하나 이상 선택하세요.",
     )
 else:  # yahoo
     stock_symbols = [
-        "US Stocks",
+        "미국 주식",
         "AAPL",
         "TSLA",
         "MSFT",
         "GOOGL",
         "AMZN",
         "─" * 20,
-        "Korean Stocks",
-        "005930.KS",  # Samsung
-        "000660.KS",  # SK Hynix
-        "066570.KS",  # LG
-        "035720.KS",  # Naver
-        "005380.KS",  # Hyundai
+        "한국 주식",
+        "005930.KS",  # 삼성전자
+        "000660.KS",  # SK 하이닉스
+        "066570.KS",  # LG전자
+        "035720.KS",  # 네이버
+        "005380.KS",  # 현대자동차
     ]
     selected_symbols = st.sidebar.multiselect(
-        "📈 Select Stocks",
+        "📈 주식 선택",
         options=[s for s in stock_symbols if "─" not in s],
         default=["AAPL", "005930.KS"],
-        help="Select US stocks (AAPL, TSLA) or Korean stocks (.KS suffix).",
+        help="미국 주식(AAPL, TSLA) 또는 한국 주식(.KS)을 선택하세요.",
     )
 
 # Interval selection
 selected_interval = st.sidebar.selectbox(
-    "⏱️ Interval",
+    "⏱️ 간격",
     options=["1d", "1h", "15m", "5m", "1m"],
     index=0,
-    help="Candle interval for charts.",
+    help="차트 캔들 간격을 선택하세요.",
 )
 
 # Date range
 date_range = st.sidebar.date_input(
-    "📅 Date Range",
+    "📅 날짜 범위",
     value=(datetime.now() - timedelta(days=90), datetime.now()),
     max_value=datetime.now(),
 )
@@ -123,29 +123,29 @@ date_range = st.sidebar.date_input(
 st.sidebar.divider()
 
 # Fetch settings
-fetch_limit = st.sidebar.slider("📍 Limit", 10, 500, 100)
+fetch_limit = st.sidebar.slider("📍 데이터 개수", 10, 500, 100)
 
 st.sidebar.divider()
 
 # AI Analysis toggle
-enable_ai = st.sidebar.checkbox("🤖 Enable AI Analysis", value=True)
+enable_ai = st.sidebar.checkbox("🤖 AI 분석 활성화", value=True)
 
 # ============================================================================
 # Main Content
 # ============================================================================
 
-st.title("📈 Invest AI - Multi-Market Dashboard")
+st.title("📈 투자 AI - 멀티마켓 대시보드")
 st.markdown(
-    f"**Market:** {selected_market} | **Symbols:** {', '.join(selected_symbols)}"
+    f"**시장:** {selected_market} | **심볼:** {', '.join(selected_symbols)}"
 )
 
 if not selected_symbols:
-    st.warning("⚠️ Please select at least one symbol from the sidebar.")
+    st.warning("⚠️ 사이드바에서 최소 하나의 심볼을 선택해주세요.")
     st.stop()
 
 # Create tabs
 tab1, tab2, tab3, tab4 = st.tabs(
-    ["📊 Price Chart", "📈 Technical Indicators", "🤖 AI Analysis", "📋 Portfolio"]
+    ["📊 가격 차트", "📈 기술적 지표", "🤖 AI 분석", "📋 포트폴리오"]
 )
 
 # ============================================================================
@@ -153,7 +153,7 @@ tab1, tab2, tab3, tab4 = st.tabs(
 # ============================================================================
 
 with tab1:
-    st.subheader("Price Chart")
+    st.subheader("가격 차트")
 
     try:
         # Fetch data for all selected symbols
@@ -175,10 +175,10 @@ with tab1:
                 if not df.empty:
                     data_dict[symbol] = df
             except Exception as e:
-                st.error(f"❌ Error fetching {symbol}: {str(e)}")
+                st.error(f"❌ {symbol} 데이터 수집 실패: {str(e)}")
 
         if not data_dict:
-            st.error("❌ No data available for selected symbols.")
+            st.error("❌ 선택한 심볼에 사용 가능한 데이터가 없습니다.")
             st.stop()
 
         # Create multi-line chart
@@ -196,9 +196,9 @@ with tab1:
             )
 
         fig.update_layout(
-            title="Close Price Over Time",
-            xaxis_title="Time",
-            yaxis_title="Close Price",
+            title="종가 변동 추이",
+            xaxis_title="시간",
+            yaxis_title="종가",
             hovermode="x unified",
             height=500,
         )
@@ -206,7 +206,7 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
         # Display latest prices
-        st.subheader("Latest Prices")
+        st.subheader("최신 가격")
         price_cols = st.columns(len(data_dict))
 
         for idx, (symbol, df) in enumerate(data_dict.items()):
@@ -223,27 +223,32 @@ with tab1:
                 )
 
     except Exception as e:
-        st.error(f"❌ Error in Price Chart: {str(e)}")
+        st.error(f"❌ 가격 차트 오류: {str(e)}")
 
 # ============================================================================
 # Tab 2: Technical Indicators
 # ============================================================================
 
 with tab2:
-    st.subheader("Technical Indicators (RSI, MACD, Bollinger Bands)")
+    st.subheader("기술적 지표 (RSI, MACD, 볼린저 밴드)")
 
     try:
         if data_dict:
-            symbol = st.selectbox("Select symbol for indicators:", list(data_dict.keys()))
+            symbol = st.selectbox("지표를 볼 심볼 선택:", list(data_dict.keys()))
 
             if symbol in data_dict:
                 df = data_dict[symbol]
 
                 # Calculate indicators
-                calc = IndicatorCalculator()
-                df = calc.calculate_rsi(df, period=14)
-                df = calc.calculate_macd(df)
-                df = calc.calculate_bollinger_bands(df, period=20, std_dev=2)
+                df_with_indicators = df.copy()
+                df_with_indicators["rsi"] = indicators.calc_rsi(df["close"], period=14)
+                macd_result = indicators.calc_macd(df["close"])
+                df_with_indicators["macd"] = macd_result["macd"]
+                df_with_indicators["macd_signal"] = macd_result["macd_signal"]
+                bb_result = indicators.calc_bollinger_bands(df["close"], period=20, num_std=2)
+                df_with_indicators["bb_upper"] = bb_result["bb_upper"]
+                df_with_indicators["bb_lower"] = bb_result["bb_lower"]
+                df = df_with_indicators
 
                 # RSI Chart
                 fig_rsi = go.Figure()
@@ -257,14 +262,14 @@ with tab2:
                     )
                 )
                 fig_rsi.add_hline(
-                    y=70, line_dash="dash", line_color="red", annotation_text="Overbought"
+                    y=70, line_dash="dash", line_color="red", annotation_text="과매수"
                 )
                 fig_rsi.add_hline(
-                    y=30, line_dash="dash", line_color="green", annotation_text="Oversold"
+                    y=30, line_dash="dash", line_color="green", annotation_text="과매도"
                 )
                 fig_rsi.update_layout(
                     title=f"RSI(14) - {symbol}",
-                    xaxis_title="Time",
+                    xaxis_title="시간",
                     yaxis_title="RSI",
                     height=400,
                 )
@@ -286,14 +291,14 @@ with tab2:
                         x=df["open_time"],
                         y=df["macd_signal"],
                         mode="lines",
-                        name="Signal",
+                        name="시그널",
                         line=dict(color="red"),
                     )
                 )
                 fig_macd.update_layout(
                     title=f"MACD - {symbol}",
-                    xaxis_title="Time",
-                    yaxis_title="Value",
+                    xaxis_title="시간",
+                    yaxis_title="값",
                     height=400,
                 )
                 st.plotly_chart(fig_macd, use_container_width=True)
@@ -345,25 +350,27 @@ with tab2:
 # ============================================================================
 
 with tab3:
-    st.subheader("🤖 AI Analysis (Claude)")
+    st.subheader("🤖 AI 분석 (Claude)")
 
     if enable_ai:
         try:
             if data_dict:
                 symbol = st.selectbox(
-                    "Select symbol for AI analysis:", list(data_dict.keys()), key="ai_symbol"
+                    "AI 분석 대상 심볼:", list(data_dict.keys()), key="ai_symbol"
                 )
 
                 if symbol in data_dict:
                     df = data_dict[symbol]
 
                     # Calculate indicators for analysis
-                    calc = IndicatorCalculator()
-                    df = calc.calculate_rsi(df, period=14)
-                    df = calc.calculate_macd(df)
-                    df = calc.calculate_bollinger_bands(df, period=20, std_dev=2)
+                    df_analysis = df.copy()
+                    df_analysis["rsi"] = indicators.calc_rsi(df["close"], period=14)
+                    macd_result = indicators.calc_macd(df["close"])
+                    df_analysis["macd"] = macd_result["macd"]
+                    df_analysis["macd_signal"] = macd_result["macd_signal"]
+                    df = df_analysis
 
-                    with st.spinner("🔄 Analyzing with Claude AI..."):
+                    with st.spinner("🔄 Claude AI로 분석 중..."):
                         try:
                             analyzer = ClaudeAnalyzer()
                             result = analyzer.analyze(df[-50:], symbol=symbol)
@@ -377,36 +384,36 @@ with tab3:
                                     else "🔴" if result.signal == "SELL"
                                     else "🟡"
                                 )
-                                st.metric("Signal", f"{signal_color} {result.signal}")
+                                st.metric("신호", f"{signal_color} {result.signal}")
 
                             with col2:
                                 st.metric(
-                                    "Confidence",
+                                    "신뢰도",
                                     f"{result.confidence:.1%}",
                                 )
 
                             with col3:
-                                st.metric("Risk Score", f"{result.risk_score:.2f}")
+                                st.metric("위험도", f"{result.risk_score:.2f}")
 
                             with col4:
-                                st.metric("Reason", "👇")
+                                st.metric("분석", "👇")
 
-                            st.info(f"**Analysis Reason:**\n\n{result.reason}")
+                            st.info(f"**분석 이유:**\n\n{result.reason}")
 
                         except Exception as e:
-                            st.error(f"❌ AI Analysis Error: {str(e)}")
+                            st.error(f"❌ AI 분석 오류: {str(e)}")
 
         except Exception as e:
-            st.error(f"❌ Error in AI Analysis tab: {str(e)}")
+            st.error(f"❌ AI 분석 탭 오류: {str(e)}")
     else:
-        st.info("AI Analysis is disabled. Enable it in the sidebar to see AI predictions.")
+        st.info("AI 분석이 비활성화되어 있습니다. 사이드바에서 활성화하여 AI 예측을 확인하세요.")
 
 # ============================================================================
 # Tab 4: Portfolio Summary
 # ============================================================================
 
 with tab4:
-    st.subheader("Portfolio Summary")
+    st.subheader("포트폴리오 요약")
 
     try:
         if data_dict:
@@ -420,11 +427,11 @@ with tab4:
 
                 portfolio_data.append(
                     {
-                        "Symbol": symbol,
-                        "Latest Price": f"${latest_price:.2f}",
-                        "Change (24h)": f"{change:+.2f}",
-                        "Change %": f"{change_pct:+.2f}%",
-                        "Data Points": len(df),
+                        "심볼": symbol,
+                        "최신 가격": f"${latest_price:.2f}",
+                        "변동 (24h)": f"{change:+.2f}",
+                        "변동률": f"{change_pct:+.2f}%",
+                        "데이터 개수": len(df),
                     }
                 )
 
@@ -432,23 +439,23 @@ with tab4:
             st.dataframe(portfolio_df, use_container_width=True)
 
             # Summary statistics
-            st.subheader("Summary Statistics")
+            st.subheader("통계")
             col1, col2, col3 = st.columns(3)
 
             with col1:
                 total_symbols = len(data_dict)
-                st.metric("Total Symbols", total_symbols)
+                st.metric("총 심볼 수", total_symbols)
 
             with col2:
                 total_data_points = sum(len(df) for df in data_dict.values())
-                st.metric("Total Data Points", total_data_points)
+                st.metric("총 데이터 개수", total_data_points)
 
             with col3:
-                market_name = "Crypto" if market_key == "binance" else "Stocks"
-                st.metric("Market", market_name)
+                market_name = "암호화폐" if market_key == "binance" else "주식"
+                st.metric("시장", market_name)
 
     except Exception as e:
-        st.error(f"❌ Error in Portfolio tab: {str(e)}")
+        st.error(f"❌ 포트폴리오 탭 오류: {str(e)}")
 
 # ============================================================================
 # Footer
@@ -458,9 +465,9 @@ st.divider()
 st.markdown(
     """
     ---
-    **Invest AI Dashboard** | Multi-Market Investment Analysis Platform
-    - **Crypto**: Binance USDT pairs (BTC, ETH, XRP, SOL, ADA, etc.)
-    - **Stocks**: Yahoo Finance (US & Korean stocks)
-    - **AI Analysis**: Claude API for trading signals
+    **투자 AI 대시보드** | 멀티마켓 투자 분석 플랫폼
+    - **암호화폐**: 바이낸스 USDT 쌍 (BTC, ETH, XRP, SOL, ADA 등)
+    - **주식**: 야후 파이낸스 (미국 & 한국 주식)
+    - **AI 분석**: Claude API 기반 거래 신호
     """
 )

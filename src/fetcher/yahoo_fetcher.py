@@ -143,15 +143,18 @@ class YahooFetcher(BaseFetcher):
                     "Check the symbol (e.g. AAPL, ^GSPC, 005930.KS)."
                 )
 
+            # Reset index: converts DatetimeIndex to 'Date' column
             df = df.reset_index()
+            # Rename 'Date' to 'open_time' before lowercasing
+            if 'Date' in df.columns:
+                df = df.rename(columns={'Date': 'open_time'})
+            # Convert all column names to lowercase
             df.columns = df.columns.str.lower()
 
-            required_cols = {"date", "open", "high", "low", "close", "volume"}
+            required_cols = {"open_time", "open", "high", "low", "close", "volume"}
             missing = required_cols - set(df.columns)
             if missing:
                 raise FetcherError(f"Missing required columns: {missing}")
-
-            df = df.rename(columns={"date": "open_time"})
 
             df["open"] = df["open"].astype(float)
             df["high"] = df["high"].astype(float)
