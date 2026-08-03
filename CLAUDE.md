@@ -33,19 +33,31 @@ Binance 데이터를 수집하고 AI(Claude API)가 분석하여 BUY/SELL/HOLD +
 
 ```
 src/
- ├── fetcher/     # 거래소 데이터 수집기 (binance_fetcher.py)
- ├── engine/      # AI 분석 엔진 (indicators.py, base_analyzer.py, claude_analyzer.py)
- ├── common/      # 공통 유틸 (retry.py 등, 여러 모듈이 공유하는 로직)
- └── dashboard.py # Streamlit 대시보드 (실 사용 화면)
+ ├── fetcher/       # 데이터 수집기 (binance_fetcher.py, yahoo_fetcher.py, fetcher_registry.py, base_fetcher.py)
+ ├── engine/        # AI 분석 엔진 (indicators.py, base_analyzer.py, claude_analyzer.py)
+ ├── common/        # 공통 유틸 (retry.py, env_loader.py — .env/Streamlit secrets 통합 로더)
+ ├── database/      # Supabase 연동 (supabase_client.py) — 자동매매 엔진 단계에서 실사용 예정
+ ├── portfolio/     # 가상 포트폴리오 (session_portfolio.py — 현재는 session_state 기반 MVP)
+ └── ui/            # Streamlit 대시보드 (실 사용 화면)
+      ├── streamlit_app.py   # 메인 앱 — Streamlit Cloud 배포 대상
+      ├── symbol_catalog.py  # 자유 검색 심볼 정규화 (고정 목록 없음)
+      └── price_chart.py     # 통합 캔들스틱+거래량+RSI+MACD+볼린저밴드 차트
 tests/
 config/
 data/
+docs/              # ARCHITECTURE.md, DATABASE_SCHEMA.md, DEPLOYMENT_GUIDE.md
+scripts/           # init_db.sql (Supabase 초기화 스크립트)
+.streamlit/        # config.toml, secrets.toml(로컬 전용, .gitignore 처리됨)
 README.md
 requirements.txt
 CLAUDE.md
+PROJECT_ROADMAP.md
 ```
 
 새 파일도 이 구조를 유지한다.
+
+### 참고: 옛 `src/dashboard.py` / `data_source_registry.py`는 폐기됨
+Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅은 `src/fetcher/fetcher_registry.py`(구 `data_source_registry.py`)로 이름이 바뀌었다. 옛 이름을 언급하는 과거 대화 내용은 참고만 하고 실제 작업은 새 경로 기준으로 한다.
 
 ## 4. Git 커밋/업로드
 
@@ -66,27 +78,75 @@ CLAUDE.md
 예: `INVEST AI (Binance 수집기 구현)`, `INVEST AI (AI 분석 엔진 설계)`.
 (대화 제목을 직접 바꾸는 기능이 없는 환경이라면, 응답 맨 앞에 추천 제목을 `제목: INVEST AI (주제)` 형식으로 먼저 안내한다.)
 
-## 6. 현재 진행 상황
+## 6. 현재 진행 상황 (2026-08-03 기준)
 
 - Phase 1 (스캐폴딩): 완료
-- Phase 2 Part 1 (Binance OHLCV 수집기 `src/fetcher/binance_fetcher.py` + 테스트): 완료
-- Phase 3 (AI 분석 엔진): 완료
-  - `src/engine/indicators.py` — RSI/MACD/이동평균/볼린저밴드/스토캐스틱/OBV/ATR 등 기술적 지표
-  - `src/engine/base_analyzer.py` — BaseAnalyzer 인터페이스 + AnalysisResult(Pydantic) 스키마 (Multi AI 확장 대비)
-  - `src/engine/claude_analyzer.py` — ClaudeAnalyzer (Claude API 기반 BUY/SELL/HOLD + Confidence + Reason + Risk Score)
-  - `src/common/retry.py` — 재시도 로직 공통화 (fetcher/analyzer 공유, DRY)
-  - 테스트 22개 전체 통과 (fetcher 8 + indicators 6 + analyzer 8)
-- Phase 4 MVP (대시보드): 완료 — `src/dashboard.py` (Streamlit), `streamlit run src/dashboard.py`로 실행
-- **Phase 5 (멀티마켓 자동매매 플랫폼 확장): 설계 중** — 범위가 "Binance만"에서 "미국주식(토스 오픈API) → 한국주식(토스 오픈API) →
-  코인(업비트→바이낸스)" 4개 시장 + 클라우드 상시구동 + 자체 페이퍼 트레이딩 엔진 + 신규 웹 UI로 확장됨.
-  상세 설계는 `docs/ARCHITECTURE.md` 참고. 진행 순서: ① 브로커 어댑터+페이퍼 트레이딩 엔진 → ② 미국주식(토스) →
-  ③ 한국주식(토스) → ④ 코인(업비트/바이낸스) → ⑤ 실거래 전환(1~2달 페이퍼 검증 후)
-- Phase 6 (대시보드 고도화)/Phase 7(Multi AI)/Phase 8(모니터링)/Phase 9(배포)/Phase 10(운영): 예정
+- Phase 2 Part 1 (Binance OHLCV 수집기): 완료
+- Phase 3 (AI 분석 엔진): 완료 — indicators / base_analyzer / claude_analyzer / retry 공통화
+- Phase 4 MVP (구 `src/dashboard.py`): 완료, 이후 Phase 5에서 `src/ui/streamlit_app.py`로 대체됨
+- **Phase 5 Part 1 (멀티마켓 대시보드): 완료**
+  - `src/fetcher/fetcher_registry.py` — 한국/미국 주식 + 암호화폐 자동 라우팅
+  - `src/fetcher/yahoo_fetcher.py` — 한국(.KS)/미국 주식 지원, 네이버(035420) 등 종목코드 버그 수정 완료
+  - 22개+ pytest 테스트 통과
+
+- **Phase 5 Part 2 (클라우드 배포 + 페이퍼 트레이딩 준비): 대부분 완료, 진행 중**
+  - ✅ Streamlit Cloud 배포 완료 (GitHub `main` 브랜치와 자동 연동, push하면 자동 재배포)
+  - ✅ `src/common/env_loader.py` — 로컬 `.env`와 Streamlit Cloud `Secrets`를 동시에 지원하도록
+    `os.environ`에 통합 로드. **Streamlit Cloud에서는 `.env`가 아니라 앱 Settings → Secrets에
+    TOML 형식으로 `ANTHROPIC_API_KEY = "..."` 를 직접 입력해야 인식됨** (이미 설정 완료, 2026-08-01).
+  - ✅ 고정 종목 목록 제거 → `src/ui/symbol_catalog.py`로 자유 텍스트 검색 지원 (한국 6자리 코드,
+    미국 티커, 암호화폐 베이스심볼을 자동으로 Yahoo 심볼로 정규화)
+  - ✅ 차트를 TradingView 위젯에서 자체 제작 Plotly 통합 차트(`src/ui/price_chart.py`)로 전환
+    — TradingView 무료 위젯이 한국거래소(KRX)를 지원하지 않아 엉뚱한 종목이 표시되는 문제가 있었음.
+    지금은 캔들스틱+거래량+RSI+MACD+볼린저밴드가 한 차트(850px)에 통합되어 있고, AI 분석과
+    동일한 데이터를 쓰므로 화면 수치와 분석 결과가 항상 일치함.
+  - ✅ 암호화폐 데이터소스를 Binance API → Yahoo Finance(`BTC-USD` 등)로 전환
+    — Streamlit Cloud 서버 IP가 Binance에서 451(지역 차단)을 받아 크립토 조회가 항상 실패했었음.
+  - ✅ Claude Sonnet 5의 `ThinkingBlock` 파싱 버그 수정 (`claude_analyzer.py`) — 응답 content의
+    첫 블록을 무조건 텍스트로 가정하던 코드를 `type == "text"` 블록만 골라 읽도록 수정, 테스트 추가.
+  - ✅ AI 신호 표시 버그 수정 — Python 3.11+에서 `str+Enum`이 `f"{signal}"` 시 "Signal.HOLD"처럼
+    나오는 문제를 `result.signal.value`로 명시적으로 꺼내도록 수정.
+  - ✅ `src/database/supabase_client.py` — Supabase(PostgreSQL) CRUD 모듈 작성 완료.
+    **단, 아직 실제 Supabase 프로젝트를 만들지 않아서 `SUPABASE_URL`/`SUPABASE_KEY`가 없음.
+    현재는 미사용 상태(코드만 준비됨).**
+  - ✅ `src/portfolio/session_portfolio.py` + Streamlit "💰 포트폴리오" 탭 — 가상 매수/매도 MVP.
+    시장별(한국 주식 ₩1,000,000 / 미국 주식 $1,000,000 / 암호화폐 $1,000,000) 가상자금을 배정해
+    직접 매수/매도 버튼으로 체험 가능. **단, `st.session_state` 기반이라 브라우저 새로고침/재접속 시
+    초기화됨 — 영구 저장이 아직 안 됨 (Supabase 연동 필요, 아래 "다음 할 일" 참고).**
+  - ⚠️ `src/ui/tradingview_widget.py`는 더 이상 코드에서 사용하지 않지만, 로컬 파일 잠금 문제로
+    삭제하지 못해 죽은 코드로 남아있음. 언젠가 여유 있을 때 정리.
+
+### 다음 할 일 (Phase 5 Part 3 — 사용자가 요청한 핵심 목표)
+
+사용자 목표: **Claude가 직접 한국주식/미국주식/암호화폐에 각 100만원(총 300만원) 가상 투자금으로
+1~2개월간 매일 자동으로 페이퍼 트레이딩을 하고, 그 결과를 실시간 대시보드에서 지켜보는 것.**
+아직 "자동"과 "영구 저장" 부분이 빠져있고, 지금까지는 사람이 버튼을 눌러야만 거래가 되는 수동 MVP 단계.
+
+남은 작업 우선순위:
+1. **Supabase 프로젝트 실제 생성** (사용자가 https://supabase.com 에서 무료 프로젝트 생성 →
+   URL/anon key를 Streamlit Cloud Secrets에 추가해야 함 — 이건 Claude가 대신 할 수 없는 사용자 액션)
+2. **포트폴리오 영구 저장 전환** — `session_portfolio.py` 로직을 `supabase_client.py`로 옮겨
+   새로고침해도 유지되도록 (테이블 스키마는 `scripts/init_db.sql`에 이미 설계되어 있음)
+3. **AI 자동 트레이딩 엔진** (`src/trading/auto_trader.py`, 신규) — Claude 분석 결과(BUY/SELL/HOLD)에
+   따라 사람 개입 없이 자동으로 가상 매수/매도 실행 + Supabase에 기록
+4. **스케줄러** — Streamlit Cloud는 상시 백그라운드 job이 제한적이므로 GitHub Actions(cron) 또는
+   외부 스케줄러로 "매일 정해진 시간에 auto_trader 실행" 구현 필요
+5. 위 4개가 끝나면 실제로 1~2개월 자동 운영 시작
+
+### 알려진 이슈 / 운영 메모
+- **로컬(Windows) Git lock 파일 문제가 자주 발생함**: `.git/index.lock`, `.git/HEAD.lock` 등이 남아
+  `git commit`/`git push`가 막히는 일이 반복됨 (추정 원인: OneDrive 동기화 또는 백신 프로그램이
+  `.git` 폴더를 감시). 발생 시 사용자가 탐색기에서 해당 `.lock` 파일을 수동 삭제해야 진행 가능 —
+  Claude가 대신 지울 수 없으므로(파일 잠김), 매번 사용자에게 삭제를 요청하고 대기한다.
+- Anthropic API는 계정에 크레딧이 있어야 동작한다 (2026-08-01 사용자가 충전 완료, 잔액 소진 시 재충전 필요).
+- Streamlit Cloud 앱 URL은 Streamlit Cloud 콘솔("내 앱" 목록)에서 확인 가능 (구체적 URL은 이 문서에 기록되지 않음).
 
 ### 실행 전 확인 사항
-- `.env`의 `ANTHROPIC_API_KEY` 설정 완료 (2026-07-29, 만료 없음(Never)으로 발급).
+- Streamlit Cloud: Settings → Secrets에 `ANTHROPIC_API_KEY` 설정 완료 (2026-08-01).
+  Supabase 관련 키(`SUPABASE_URL`, `SUPABASE_KEY`)는 아직 미설정.
+- 로컬 개발 시 `.env`의 `ANTHROPIC_API_KEY` 설정 완료 (2026-07-29, 만료 없음(Never)으로 발급).
 - 샌드박스 환경은 외부 네트워크(Binance API, Anthropic API)가 막혀 있어 실제 데이터/실제 API 호출 검증은
-  로컬 PC에서만 가능. 코드 자체는 mock 기반 pytest로 전량 검증됨.
+  로컬 PC 또는 Streamlit Cloud에서만 가능. 코드 자체는 mock 기반 pytest로 검증됨(`test_claude_analyzer.py` 등).
 
 ## 7. 구글 드라이브 동기화
 
