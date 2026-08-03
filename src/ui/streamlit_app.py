@@ -185,13 +185,15 @@ with tab2:
                 analyzer = ClaudeAnalyzer()
                 result = analyzer.analyze(entry["df"][-50:], symbol=ai_symbol)
 
+                signal_value = result.signal.value if hasattr(result.signal, "value") else str(result.signal)
+
                 col1, col2, col3 = st.columns(3)
                 signal_color = (
-                    "🟢" if result.signal == "BUY"
-                    else "🔴" if result.signal == "SELL"
+                    "🟢" if signal_value == "BUY"
+                    else "🔴" if signal_value == "SELL"
                     else "🟡"
                 )
-                col1.metric("신호", f"{signal_color} {result.signal}")
+                col1.metric("신호", f"{signal_color} {signal_value}")
                 col2.metric("신뢰도", f"{result.confidence:.1%}")
                 col3.metric("위험도", f"{result.risk_score:.2f}")
                 st.info(f"**분석 이유:**\n\n{result.reason}")
