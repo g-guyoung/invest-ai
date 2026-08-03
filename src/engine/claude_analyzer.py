@@ -176,7 +176,16 @@ class ClaudeAnalyzer(BaseAnalyzer):
                 max_tokens=self.max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
-            raw_text = response.content[0].text
+            # Claude 응답은 Thinking 블록 등 text가 아닌 블록을 포함할 수 있으므로
+            # type이 "text"인 블록만 골라 이어붙인다 (첫 블록을 무조건 텍스트로
+            # 가정하면 ThinkingBlock에서 AttributeError가 발생한다).
+            text_parts = [
+                block.text for block in response.content
+                if getattr(block, "type", None) == "text"
+            ]
+            if not text_parts:
+                raise ValueError("Claude 응답에서 텍스트 블록을 찾을 수 없습니다.")
+            raw_text = "\n".join(text_parts)
             return self._parse_response(raw_text)
 
         try:

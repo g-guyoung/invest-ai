@@ -31,13 +31,31 @@ def _make_analysis_df(n: int = 40) -> pd.DataFrame:
 
 
 class _FakeBlock:
-    def __init__(self, text):
+    """Anthropic SDK의 TextBlock을 흉내낸다 (type="text" 속성 포함).
+
+    실제 Claude 응답은 ThinkingBlock 등 text가 아닌 블록을 포함할 수 있으므로,
+    ClaudeAnalyzer는 block.type == "text"인 블록만 골라서 읽는다.
+    """
+
+    def __init__(self, text, block_type="text"):
         self.text = text
+        self.type = block_type
+
+
+class _FakeThinkingBlock:
+    """text 속성이 없는 ThinkingBlock을 흉내낸다."""
+
+    def __init__(self):
+        self.type = "thinking"
 
 
 class _FakeMessage:
-    def __init__(self, text):
-        self.content = [_FakeBlock(text)]
+    def __init__(self, text, with_thinking_block=False):
+        blocks = []
+        if with_thinking_block:
+            blocks.append(_FakeThinkingBlock())
+        blocks.append(_FakeBlock(text))
+        self.content = blocks
 
 
 class _FakeMessagesAPI:
@@ -90,6 +108,16 @@ def test_analyze_success_when_json_wrapped_in_extra_text():
     wrapped = f"물론입니다, 분석 결과입니다:\n\n{VALID_JSON}\n\n이상입니다."
     client = _FakeClient([_FakeMessage(wrapped)])
     analyzer = ClaudeAnalyzer(client=client)
+
+    result = analyzer.analyze(_make_analysis_df(), symbol="BTCUSDT")
+
+    assert result.signal.value == "BUY"
+
+
+def test_analyze_success_with_thinking_block_ignores_it():
+    """Claude Sonnet 5의 ThinkingBlock이 응답에 섞여 있어도 text 블록만 읽어야 한다."""
+    client = _FakeClient([_FakeMessage(VALID_JSON, with_thinking_block=True)])
+    analyzer = ClaudeAnalyzer(client=client, max_retries=1)
 
     result = analyzer.analyze(_make_analysis_df(), symbol="BTCUSDT")
 
