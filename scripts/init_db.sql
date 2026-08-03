@@ -143,6 +143,62 @@ CREATE TABLE IF NOT EXISTS portfolio_history (
 CREATE INDEX IF NOT EXISTS idx_portfolio_history_user_time ON portfolio_history(user_id, recorded_at DESC);
 
 -- ============================================================================
+-- 8. Wallets / Wallet Holdings / Wallet Trades (페이퍼 트레이딩 v2)
+-- ============================================================================
+-- 목적: 자유 검색 심볼(symbols 테이블에 사전 등록되지 않은 종목 포함)을
+--       지원하는 시장별(한국/미국/암호화폐) 가상 현금/보유종목/거래내역을
+--       영구 저장한다.
+-- 배경: 기존 portfolio/orders 테이블은 symbols FK를 요구해, 사용자가
+--       자유 텍스트로 검색하는 아무 종목이나 사전 등록 없이 거래할 수 있는
+--       현재 UI(symbol_catalog.py)와 맞지 않는다. 그래서 symbol을 문자열로
+--       직접 저장하는 별도 테이블로 분리했다 (Phase 5 Part 3, 2026-08-04).
+--       portfolio/orders 테이블은 삭제하지 않고 그대로 둔다 (향후 사전 등록
+--       종목 기반 기능에 재사용 가능).
+
+CREATE TABLE IF NOT EXISTS wallets (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL DEFAULT 1,
+    category VARCHAR(20) NOT NULL,          -- UI 카테고리 라벨 (예: '🇰🇷 한국 주식')
+    cash DECIMAL(20, 2) NOT NULL,
+    initial_balance DECIMAL(20, 2) NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, category)
+);
+
+CREATE TABLE IF NOT EXISTS wallet_holdings (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL DEFAULT 1,
+    category VARCHAR(20) NOT NULL,
+    symbol VARCHAR(20) NOT NULL,
+    name VARCHAR(100),
+    qty DECIMAL(20, 8) NOT NULL,
+    avg_price DECIMAL(20, 8) NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, category, symbol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_holdings_user_cat ON wallet_holdings(user_id, category);
+
+CREATE TABLE IF NOT EXISTS wallet_trades (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL DEFAULT 1,
+    category VARCHAR(20) NOT NULL,
+    symbol VARCHAR(20) NOT NULL,
+    name VARCHAR(100),
+    trade_type VARCHAR(10) NOT NULL,        -- BUY / SELL
+    qty DECIMAL(20, 8) NOT NULL,
+    price DECIMAL(20, 8) NOT NULL,
+    amount DECIMAL(20, 2) NOT NULL,
+    source VARCHAR(20) DEFAULT 'MANUAL',    -- MANUAL(수동) / AUTO_AI(자동매매)
+    ai_signal VARCHAR(10),                  -- 자동매매인 경우 AI 신호 (감사 추적용)
+    ai_confidence DECIMAL(5, 4),
+    ai_reason TEXT,
+    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_trades_user_cat_time ON wallet_trades(user_id, category, executed_at DESC);
+
+-- ============================================================================
 -- 샘플 데이터 삽입
 -- ============================================================================
 

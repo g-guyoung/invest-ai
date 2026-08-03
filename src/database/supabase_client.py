@@ -422,6 +422,239 @@ class SupabaseClient:
             return pd.DataFrame()
 
     # ========================================================================
+    # Wallets / Holdings / Trades (페이퍼 트레이딩 v2, Phase 5 Part 3)
+    # ========================================================================
+    # 목적: 자유 검색 심볼(symbols 테이블에 사전 등록되지 않은 종목 포함)을
+    #       지원하는 시장별(한국/미국/암호화폐) 가상 현금/보유종목/거래내역을
+    #       영구 저장한다. 기존 portfolio/orders 테이블은 symbols FK가
+    #       필요해 자유 검색과 맞지 않아 별도 테이블(wallet_*)로 분리했다.
+    #       스키마: scripts/init_db.sql 참고.
+
+    def get_wallet(self, user_id: int, category: str) -> Optional[Dict[str, Any]]:
+        """
+        시장 카테고리별 지갑(현금 잔액) 조회.
+
+        Parameters:
+            user_id: 사용자 ID
+            category: 시장 카테고리 (예: "🇰🇷 한국 주식")
+
+        Returns:
+            지갑 정보 딕셔너리, 없으면 None
+        """
+        try:
+            result = (
+                self.client.table("wallets").select("*")
+                .eq("user_id", user_id).eq("category", category)
+                .limit(1).execute()
+            )
+            return result.data[0] if result.data else None
+        except Exception as e:
+            logger.error(f"지갑 조회 실패({category}): {e}")
+            return None
+
+    def init_wallet(self, user_id: int, category: str, initial_balance: float) -> bool:
+        """
+        지갑이 없으면 초기 자금으로 새로 만든다 (이미 있으면 그대로 둔다).
+
+        Parameters:
+            user_id: 사용자 ID
+            category: 시장 카테고리
+            initial_balance: 초기 가상자금
+
+        Returns:
+            성공 여부 (이미 존재해도 True)
+        """
+        try:
+            if self.get_wallet(user_id, category):
+                return True
+            self.client.table("wallets").insert({
+                "user_id": user_id,
+                "category": category,
+                "cash": initial_balance,
+                "initial_balance": initial_balance,
+            }).execute()
+            logger.info(f"지갑 초기화: {category} (초기자금 {initial_balance:,.0f})")
+            return True
+        except Exception as e:
+            logger.error(f"지갑 초기화 실패({category}): {e}")
+            return False
+
+    def update_wallet_cash(self, user_id: int, category: str, cash: float) -> bool:
+        """
+        지갑 현금 잔액을 갱신한다 (매수/매도 체결 후 호출).
+
+        Parameters:
+            user_id: 사용자 ID
+            category: 시장 카테고리
+            cash: 갱신할 현금 잔액
+
+        Returns:
+            성공 여부
+        """
+        try:
+            self.client.table("wallets").update({"cash": cash}).eq(
+                "user_id", user_id
+            ).eq("category", category).execute()
+            return True
+        except Exception as e:
+            logger.error(f"지갑 현금 갱신 실패({category}): {e}")
+            return False
+
+    def get_holdings(self, user_id: int, category: str) -> List[Dict[str, Any]]:
+        """
+        시장 카테고리별 보유 종목 전체 조회.
+
+        Parameters:
+            user_id: 사용자 ID
+            category: 시장 카테고리
+
+        Returns:
+            보유 종목 딕셔너리 리스트 (symbol, name, qty, avg_price)
+        """
+        try:
+            result = (
+                self.client.table("wallet_holdings").select("*")
+                .eq("user_id", user_id).eq("category", category).execute()
+            )
+            return result.data or []
+        except Exception as e:
+            logger.error(f"보유종목 조회 실패({category}): {e}")
+            return []
+
+    def upsert_holding(
+        self, user_id: int, category: str, symbol: str, name: str,
+        qty: float, avg_price: float,
+    ) -> bool:
+        """
+        보유 종목을 추가하거나 갱신한다 (수량/평균단가 upsert).
+
+        Parameters:
+            user_id: 사용자 ID
+            category: 시장 카테고리
+            symbol: 종목 심볼
+            name: 종목 표시 이름
+            qty: 보유 수량
+            avg_price: 평균 매수가
+
+        Returns:
+            성공 여부
+        """
+        try:
+            self.client.table("wallet_holdings").upsert(
+                {
+                    "user_id": user_id, "category": category, "symbol": symbol,
+                    "name": name, "qty": qty, "avg_price": avg_price,
+                },
+                on_conflict="user_id,category,symbol",
+            ).execute()
+            return True
+        except Exception as e:
+            logger.error(f"보유종목 갱신 실패({symbol}): {e}")
+            return False
+
+    def delete_holding(self, user_id: int, category: str, symbol: str) -> bool:
+        """
+        보유 종목을 삭제한다 (전량 매도 시 호출).
+
+        Parameters:
+            user_id: 사용자 ID
+            category: 시장 카테고리
+            symbol: 종목 심볼
+
+        Returns:
+            성공 여부
+        """
+        try:
+            self.client.table("wallet_holdings").delete().eq(
+                "user_id", user_id
+            ).eq("category", category).eq("symbol", symbol).execute()
+            return True
+        except Exception as e:
+            logger.error(f"보유종목 삭제 실패({symbol}): {e}")
+            return False
+
+    def add_wallet_trade(
+        self,
+        user_id: int,
+        category: str,
+        symbol: str,
+        name: str,
+        trade_type: str,
+        qty: float,
+        price: float,
+        amount: float,
+        source: str = "MANUAL",
+        ai_signal: Optional[str] = None,
+        ai_confidence: Optional[float] = None,
+        ai_reason: Optional[str] = None,
+    ) -> bool:
+        """
+        거래 체결 기록을 추가한다 (수동 거래 + 자동매매 모두 사용).
+
+        Parameters:
+            user_id: 사용자 ID
+            category: 시장 카테고리
+            symbol: 종목 심볼
+            name: 종목 표시 이름
+            trade_type: "BUY" 또는 "SELL"
+            qty: 체결 수량
+            price: 체결 가격
+            amount: 체결 금액
+            source: "MANUAL" 또는 "AUTO_AI"
+            ai_signal: 자동매매인 경우 AI 신호 (감사 추적용)
+            ai_confidence: 자동매매인 경우 AI 신뢰도
+            ai_reason: 자동매매인 경우 AI 판단 근거
+
+        Returns:
+            성공 여부
+        """
+        try:
+            self.client.table("wallet_trades").insert({
+                "user_id": user_id,
+                "category": category,
+                "symbol": symbol,
+                "name": name,
+                "trade_type": trade_type,
+                "qty": qty,
+                "price": price,
+                "amount": amount,
+                "source": source,
+                "ai_signal": ai_signal,
+                "ai_confidence": ai_confidence,
+                "ai_reason": ai_reason,
+            }).execute()
+            logger.info(f"거래 기록({source}): {category} {symbol} {trade_type} {qty}개 @ {price}")
+            return True
+        except Exception as e:
+            logger.error(f"거래 기록 실패({symbol}): {e}")
+            return False
+
+    def get_wallet_trades(
+        self, user_id: int, category: str, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """
+        시장 카테고리별 최근 거래 내역을 조회한다.
+
+        Parameters:
+            user_id: 사용자 ID
+            category: 시장 카테고리
+            limit: 조회 개수
+
+        Returns:
+            거래 내역 딕셔너리 리스트 (최신순)
+        """
+        try:
+            result = (
+                self.client.table("wallet_trades").select("*")
+                .eq("user_id", user_id).eq("category", category)
+                .order("executed_at", desc=True).limit(limit).execute()
+            )
+            return result.data or []
+        except Exception as e:
+            logger.error(f"거래 내역 조회 실패({category}): {e}")
+            return []
+
+    # ========================================================================
     # Health Check
     # ========================================================================
 

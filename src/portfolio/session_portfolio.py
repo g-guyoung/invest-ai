@@ -1,17 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-세션 기반 가상 포트폴리오 (페이퍼 트레이딩 MVP).
+가상 포트폴리오 (페이퍼 트레이딩).
 
-목적: Streamlit session_state에 저장되는 간단한 가상 매수/매도 기능을 제공한다.
-      시장(한국/미국/암호화폐)별로 초기 가상자금을 배정하고, 사용자가 직접
-      매수/매도 버튼을 눌러 즉시 체험할 수 있도록 한다.
+목적: 시장(한국/미국/암호화폐)별로 초기 가상자금을 배정하고, 수동 매수/매도
+      버튼(Streamlit) 또는 자동매매 엔진(src.trading.auto_trader) 양쪽에서
+      동일한 로직으로 가상 매매를 체결할 수 있도록 한다.
 
 설계 노트
 ---------
-- 이 모듈은 "1-2개월 AI 자동매매 엔진"(Phase 5-2-3, 예정)의 전 단계로,
-  포트폴리오 구조/계산 로직을 먼저 검증하기 위한 MVP다.
-- 자동매매 엔진 단계에서는 이 로직을 Supabase 영구 저장 + 스케줄러 기반
-  자동 실행으로 확장한다 (세션이 아니라 DB에 상태를 둔다).
+- 이 모듈의 계산 로직(buy/sell/get_summary)은 상태 저장 방식(세션 전용인지
+  Supabase 영구 저장인지)을 전혀 몰라도 되도록 설계했다 (Repository Pattern,
+  src.portfolio.repository_factory.get_repository()가 실제 저장소를 결정한다).
+  - Supabase가 설정 안 돼 있으면: 기존과 동일하게 세션에서만 동작 (새로고침 시 초기화).
+  - Supabase가 설정돼 있으면: 매수/매도할 때마다 자동으로 영구 저장된다.
+- session_state 파라미터는 "dict-like"이기만 하면 되므로, Streamlit 없이도
+  plain dict를 넘겨 자동매매 엔진에서 그대로 재사용할 수 있다.
 - 통화 단위: 한국 주식은 원(KRW), 미국 주식/암호화폐는 달러(USD)로 각각
   독립적인 가상자금 100만을 배정한다 (실제 환율 변환은 하지 않는 단순화된 모델).
 """
@@ -21,36 +24,29 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-INITIAL_BALANCE = 1_000_000.0
+from src.portfolio.constants import CATEGORIES, CURRENCY_SYMBOL, INITIAL_BALANCE
+from src.portfolio.repository_factory import get_repository
 
-CURRENCY_SYMBOL = {
-    "🇰🇷 한국 주식": "₩",
-    "🇺🇸 미국 주식": "$",
-    "₿ 암호화폐": "$",
-}
-
-CATEGORIES = list(CURRENCY_SYMBOL.keys())
+# 하위 호환을 위해 기존 이름으로도 그대로 노출한다 (streamlit_app.py가
+# sp.CATEGORIES / sp.CURRENCY_SYMBOL / sp.INITIAL_BALANCE로 참조 중).
+__all__ = [
+    "INITIAL_BALANCE", "CURRENCY_SYMBOL", "CATEGORIES",
+    "init_portfolio", "buy", "sell", "get_summary",
+]
 
 
 def init_portfolio(session_state: dict) -> None:
     """
-    session_state에 포트폴리오 구조가 없으면 초기화한다.
+    session_state에 포트폴리오 구조가 없으면 초기화(또는 저장소에서 복원)한다.
 
     Args:
-        session_state: st.session_state (dict-like 객체).
+        session_state: st.session_state (dict-like 객체) 또는 plain dict.
 
     Returns:
         None (session_state를 직접 수정).
     """
     if "portfolio" not in session_state:
-        session_state["portfolio"] = {
-            category: {
-                "cash": INITIAL_BALANCE,
-                "holdings": {},  # symbol -> {"name":.., "qty":.., "avg_price":..}
-                "history": [],   # 거래 기록 리스트
-            }
-            for category in CATEGORIES
-        }
+        get_repository().load_into(session_state)
 
 
 def buy(
@@ -60,17 +56,25 @@ def buy(
     name: str,
     price: float,
     amount: float,
+    source: str = "MANUAL",
+    ai_signal: Optional[str] = None,
+    ai_confidence: Optional[float] = None,
+    ai_reason: Optional[str] = None,
 ) -> tuple[bool, str]:
     """
     가상 매수를 실행한다.
 
     Args:
-        session_state: st.session_state.
+        session_state: st.session_state 또는 plain dict.
         category: 시장 카테고리.
         symbol: 종목 심볼.
         name: 종목 표시 이름.
         price: 현재가.
         amount: 매수할 금액(현금 기준).
+        source: "MANUAL"(사용자 수동 거래) 또는 "AUTO_AI"(자동매매 엔진).
+        ai_signal: 자동매매인 경우 AI 신호 문자열, 감사 추적용.
+        ai_confidence: 자동매매인 경우 AI 신뢰도(0.0~1.0).
+        ai_reason: 자동매매인 경우 AI 판단 근거.
 
     Returns:
         (성공 여부, 결과 메시지) 튜플.
@@ -102,6 +106,11 @@ def buy(
         "symbol": symbol, "type": "BUY", "qty": qty, "price": price, "amount": amount,
     })
 
+    get_repository().record_trade(
+        category, symbol, name, "BUY", qty, price, amount, book,
+        source=source, ai_signal=ai_signal, ai_confidence=ai_confidence, ai_reason=ai_reason,
+    )
+
     return True, f"✅ {name} {qty:.4f}주 매수 완료 ({amount:,.0f} 사용)"
 
 
@@ -111,16 +120,24 @@ def sell(
     symbol: str,
     price: float,
     qty: Optional[float] = None,
+    source: str = "MANUAL",
+    ai_signal: Optional[str] = None,
+    ai_confidence: Optional[float] = None,
+    ai_reason: Optional[str] = None,
 ) -> tuple[bool, str]:
     """
     가상 매도를 실행한다.
 
     Args:
-        session_state: st.session_state.
+        session_state: st.session_state 또는 plain dict.
         category: 시장 카테고리.
         symbol: 종목 심볼.
         price: 현재가.
         qty: 매도할 수량. None이면 전량 매도.
+        source: "MANUAL"(사용자 수동 거래) 또는 "AUTO_AI"(자동매매 엔진).
+        ai_signal: 자동매매인 경우 AI 신호 문자열, 감사 추적용.
+        ai_confidence: 자동매매인 경우 AI 신뢰도(0.0~1.0).
+        ai_reason: 자동매매인 경우 AI 판단 근거.
 
     Returns:
         (성공 여부, 결과 메시지) 튜플.
@@ -148,6 +165,11 @@ def sell(
         "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "symbol": symbol, "type": "SELL", "qty": sell_qty, "price": price, "amount": proceeds,
     })
+
+    get_repository().record_trade(
+        category, symbol, name, "SELL", sell_qty, price, proceeds, book,
+        source=source, ai_signal=ai_signal, ai_confidence=ai_confidence, ai_reason=ai_reason,
+    )
 
     return True, f"✅ {name} {sell_qty:.4f}주 매도 완료 ({proceeds:,.0f} 회수)"
 
