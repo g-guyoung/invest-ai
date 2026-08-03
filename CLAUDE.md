@@ -78,7 +78,7 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
 예: `INVEST AI (Binance 수집기 구현)`, `INVEST AI (AI 분석 엔진 설계)`.
 (대화 제목을 직접 바꾸는 기능이 없는 환경이라면, 응답 맨 앞에 추천 제목을 `제목: INVEST AI (주제)` 형식으로 먼저 안내한다.)
 
-## 6. 현재 진행 상황 (2026-08-03 기준)
+## 6. 현재 진행 상황 (2026-08-04 기준)
 
 - Phase 1 (스캐폴딩): 완료
 - Phase 2 Part 1 (Binance OHLCV 수집기): 완료
@@ -106,32 +106,48 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
     첫 블록을 무조건 텍스트로 가정하던 코드를 `type == "text"` 블록만 골라 읽도록 수정, 테스트 추가.
   - ✅ AI 신호 표시 버그 수정 — Python 3.11+에서 `str+Enum`이 `f"{signal}"` 시 "Signal.HOLD"처럼
     나오는 문제를 `result.signal.value`로 명시적으로 꺼내도록 수정.
-  - ✅ `src/database/supabase_client.py` — Supabase(PostgreSQL) CRUD 모듈 작성 완료.
-    **단, 아직 실제 Supabase 프로젝트를 만들지 않아서 `SUPABASE_URL`/`SUPABASE_KEY`가 없음.
-    현재는 미사용 상태(코드만 준비됨).**
+  - ✅ `src/database/supabase_client.py` — Supabase(PostgreSQL) CRUD 모듈. Phase 5 Part 3에서
+    지갑(`wallets`)/보유종목(`wallet_holdings`)/거래내역(`wallet_trades`) CRUD 메서드 추가 완료.
   - ✅ `src/portfolio/session_portfolio.py` + Streamlit "💰 포트폴리오" 탭 — 가상 매수/매도 MVP.
     시장별(한국 주식 ₩1,000,000 / 미국 주식 $1,000,000 / 암호화폐 $1,000,000) 가상자금을 배정해
-    직접 매수/매도 버튼으로 체험 가능. **단, `st.session_state` 기반이라 브라우저 새로고침/재접속 시
-    초기화됨 — 영구 저장이 아직 안 됨 (Supabase 연동 필요, 아래 "다음 할 일" 참고).**
+    직접 매수/매도 버튼으로 체험 가능.
   - ⚠️ `src/ui/tradingview_widget.py`는 더 이상 코드에서 사용하지 않지만, 로컬 파일 잠금 문제로
     삭제하지 못해 죽은 코드로 남아있음. 언젠가 여유 있을 때 정리.
 
-### 다음 할 일 (Phase 5 Part 3 — 사용자가 요청한 핵심 목표)
+- **Phase 5 Part 3 (포트폴리오 영구 저장 + AI 자동매매 엔진): 코드 완료, Supabase 프로젝트 생성만 대기 중** (2026-08-04)
+  - ✅ **포트폴리오 영구 저장 (Repository Pattern)** — `src/portfolio/base_repository.py`(인터페이스),
+    `session_repository.py`(세션 폴백, 기존 동작과 동일), `supabase_repository.py`(Supabase 영구 저장),
+    `repository_factory.py`(SUPABASE_URL/KEY 설정+연결 성공 시 자동으로 Supabase 사용, 그 외에는
+    안전하게 세션으로 폴백). `session_portfolio.py`의 `buy()`/`sell()`/`init_portfolio()` 시그니처는
+    그대로 유지했고 내부에서만 저장소를 호출하도록 바꿔서, Streamlit UI 코드는 전혀 수정하지 않았다.
+  - ✅ `scripts/init_db.sql`에 `wallets`/`wallet_holdings`/`wallet_trades` 테이블 추가
+    (기존 `portfolio`/`orders` 테이블은 symbols 사전 등록 FK가 필요해 자유 검색 심볼과 안 맞아서
+    건드리지 않고 그대로 둠 — 새 테이블은 symbol을 문자열로 직접 저장).
+  - ✅ **AI 자동 트레이딩 엔진** (`src/trading/auto_trader.py`, 신규) — `AutoTrader` 클래스가
+    감시 종목(`DEFAULT_WATCHLIST`: 삼성전자/SK하이닉스/AAPL/TSLA/BTC/ETH)을 순회하며 Claude 분석 →
+    신뢰도/위험도 규칙(`TradingConfig`) 통과 시 `session_portfolio.buy()/sell()`을 그대로 재사용해
+    자동 체결한다. `python -m src.trading.auto_trader`로 단독 실행 가능.
+  - ✅ **스케줄러** — `.github/workflows/auto_trade.yml` (GitHub Actions, 매일 00:30 UTC = 한국시간
+    09:30 cron + 수동 실행 버튼). **단, GitHub 저장소 Settings → Secrets에 `ANTHROPIC_API_KEY`/
+    `SUPABASE_URL`/`SUPABASE_KEY`를 등록해야 실제로 동작함 (사용자 액션 필요, 아래 참고).**
+  - ✅ pytest 36개 신규 테스트 전부 통과 (`test_portfolio_repository.py`, `test_session_portfolio.py`,
+    `test_auto_trader.py` — 정상/실패/엣지 케이스 + 저장소 폴백 시나리오 포함).
+  - ⚠️ **아직 Supabase 프로젝트가 실제로 없어서(SUPABASE_URL/KEY 미설정), 지금 배포된 앱은 여전히
+    세션 저장소로 자동 폴백 중 — 위 기능들은 "키만 넣으면 바로 동작"하는 상태이지 아직 실사용 중은 아님.**
+
+### 다음 할 일 (Phase 5 Part 3 마무리 — 사용자 액션만 남음)
 
 사용자 목표: **Claude가 직접 한국주식/미국주식/암호화폐에 각 100만원(총 300만원) 가상 투자금으로
 1~2개월간 매일 자동으로 페이퍼 트레이딩을 하고, 그 결과를 실시간 대시보드에서 지켜보는 것.**
-아직 "자동"과 "영구 저장" 부분이 빠져있고, 지금까지는 사람이 버튼을 눌러야만 거래가 되는 수동 MVP 단계.
+코드(영구 저장 + 자동매매 엔진 + 스케줄러)는 다 준비됐고, 남은 건 아래 사용자 액션 2가지뿐이다.
 
 남은 작업 우선순위:
 1. **Supabase 프로젝트 실제 생성** (사용자가 https://supabase.com 에서 무료 프로젝트 생성 →
-   URL/anon key를 Streamlit Cloud Secrets에 추가해야 함 — 이건 Claude가 대신 할 수 없는 사용자 액션)
-2. **포트폴리오 영구 저장 전환** — `session_portfolio.py` 로직을 `supabase_client.py`로 옮겨
-   새로고침해도 유지되도록 (테이블 스키마는 `scripts/init_db.sql`에 이미 설계되어 있음)
-3. **AI 자동 트레이딩 엔진** (`src/trading/auto_trader.py`, 신규) — Claude 분석 결과(BUY/SELL/HOLD)에
-   따라 사람 개입 없이 자동으로 가상 매수/매도 실행 + Supabase에 기록
-4. **스케줄러** — Streamlit Cloud는 상시 백그라운드 job이 제한적이므로 GitHub Actions(cron) 또는
-   외부 스케줄러로 "매일 정해진 시간에 auto_trader 실행" 구현 필요
-5. 위 4개가 끝나면 실제로 1~2개월 자동 운영 시작
+   `scripts/init_db.sql` 실행 → URL/anon key를 Streamlit Cloud Secrets에 추가 — Claude가 대신 못 함)
+2. **GitHub Actions Secrets 등록** (저장소 Settings → Secrets and variables → Actions에
+   `ANTHROPIC_API_KEY`/`SUPABASE_URL`/`SUPABASE_KEY` 등록 — 이것도 사용자만 할 수 있는 액션)
+3. 위 2개가 끝나면 GitHub Actions가 매일 자동으로 `auto_trader`를 실행하며 실제로 1~2개월
+   자동 운영이 시작된다 (코드 추가 작업 없이 바로 시작 가능).
 
 ### 알려진 이슈 / 운영 메모
 - **로컬(Windows) Git lock 파일 문제가 자주 발생함**: `.git/index.lock`, `.git/HEAD.lock` 등이 남아

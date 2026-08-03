@@ -299,11 +299,11 @@ scheduler.start()
 
 ## ✅ **체크리스트**
 
-- [ ] Phase 5-2-1: Streamlit Cloud 배포 완료
-- [ ] Phase 5-2-2: AI 자동 트레이딩 엔진 완료
-- [ ] Phase 5-2-3: 스케줄러 완료
-- [ ] Phase 5-2-4: 실시간 대시보드 완료
-- [ ] Phase 5-2-5: 1-2개월 자동 운영 시작
+- [x] Phase 5-2-1: Streamlit Cloud 배포 완료
+- [x] Phase 5-2-2: AI 자동 트레이딩 엔진 완료 (`src/trading/auto_trader.py`, 2026-08-04)
+- [x] Phase 5-2-3: 스케줄러 완료 (`.github/workflows/auto_trade.yml`, 2026-08-04 — Secrets 등록만 남음)
+- [x] Phase 5-2-4: 실시간 대시보드 완료 (Streamlit "💰 포트폴리오" 탭)
+- [ ] Phase 5-2-5: 1-2개월 자동 운영 시작 (Supabase 프로젝트 생성 + GitHub Secrets 등록 후 자동 시작)
 
 **예상 완료**: 2026-08-03 (오늘 + 2일)
 

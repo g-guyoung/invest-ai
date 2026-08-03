@@ -1,0 +1,42 @@
+name: AI Auto Trading (Paper Trading)
+
+# Phase 5 Part 3 — Streamlit Cloud는 상시 백그라운드 job을 지원하지 않으므로,
+# GitHub Actions cron으로 매일 자동매매 엔진(src/trading/auto_trader.py)을 실행한다.
+#
+# 사전 준비 (Claude가 대신 할 수 없는 사용자 액션):
+#   GitHub 저장소 Settings → Secrets and variables → Actions 에 아래 값을 등록해야 한다.
+#   - ANTHROPIC_API_KEY
+#   - SUPABASE_URL
+#   - SUPABASE_KEY
+#   (등록 전까지는 이 워크플로가 실행돼도 Supabase 연결 실패로 세션 저장소로
+#    폴백하며, 실행 자체는 에러 없이 끝나지만 결과가 영구 저장되지 않는다.)
+
+on:
+  schedule:
+    # 매일 00:30 UTC = 한국시간 09:30 (평일/주말 구분 없이 실행 — 암호화폐는 24/7)
+    - cron: "30 0 * * *"
+  workflow_dispatch: {}  # 수동 실행 버튼 (테스트용)
+
+jobs:
+  auto-trade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run AI auto trading engine
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python -m src.trading.auto_trader
