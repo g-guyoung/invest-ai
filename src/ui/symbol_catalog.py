@@ -1,122 +1,114 @@
 # -*- coding: utf-8 -*-
 """
-심볼 카탈로그.
+심볼 정규화 유틸리티.
 
-목적: 대시보드에서 사용하는 종목 목록을 한 곳에서 관리.
-      각 종목에 대해 표시 이름, TradingView 심볼(차트용), Yahoo 심볼(데이터 수집용)을 매핑한다.
+목적: 사용자가 자유롭게 입력한 종목 코드/티커를 각 시장에 맞는
+      Yahoo Finance 심볼로 정규화한다 (고정 목록 없이 검색 지원).
 
 설계 노트
 ---------
-- TradingView 위젯은 브라우저에서 직접 TradingView 서버와 통신하므로
-  Streamlit Cloud 서버의 아웃바운드 API 제한(Binance 451 에러 등)과 무관하게 동작한다.
-- 데이터 수집(AI 분석용)은 Yahoo Finance로 통일한다. 암호화폐도 Binance 대신
-  Yahoo의 "-USD" 심볼(BTC-USD 등)을 사용해 클라우드 환경에서의 API 차단 문제를 회피한다.
+- 사용자가 "005930", "005930.KS", "삼성전자" 등 다양한 형태로 입력해도
+  Yahoo Finance가 이해하는 표준 심볼로 변환한다.
+- 회사명은 알려진 경우에만 참고용으로 표시하고, 모르는 종목도 코드만으로
+  자유롭게 조회 가능하도록 한다 (검색을 막지 않는다).
 """
 
 from __future__ import annotations
 
-from typing import Dict, TypedDict
+import re
+from typing import Optional
 
-
-class SymbolInfo(TypedDict):
-    name: str
-    tv_symbol: str      # TradingView 차트 심볼 (예: "NASDAQ:AAPL")
-    yahoo_symbol: str   # Yahoo Finance 데이터 수집 심볼 (예: "AAPL")
-
-
-# ============================================================================
-# 한국 주식 (KRX)
-# ============================================================================
-
-KOREAN_STOCKS: Dict[str, SymbolInfo] = {
-    "005930.KS": {"name": "삼성전자", "tv_symbol": "KRX:005930", "yahoo_symbol": "005930.KS"},
-    "000660.KS": {"name": "SK하이닉스", "tv_symbol": "KRX:000660", "yahoo_symbol": "000660.KS"},
-    "066570.KS": {"name": "LG전자", "tv_symbol": "KRX:066570", "yahoo_symbol": "066570.KS"},
-    "035420.KS": {"name": "네이버", "tv_symbol": "KRX:035420", "yahoo_symbol": "035420.KS"},
-    "035720.KS": {"name": "카카오", "tv_symbol": "KRX:035720", "yahoo_symbol": "035720.KS"},
-    "005380.KS": {"name": "현대차", "tv_symbol": "KRX:005380", "yahoo_symbol": "005380.KS"},
-    "051910.KS": {"name": "LG화학", "tv_symbol": "KRX:051910", "yahoo_symbol": "051910.KS"},
-    "207940.KS": {"name": "삼성바이오로직스", "tv_symbol": "KRX:207940", "yahoo_symbol": "207940.KS"},
-    "005490.KS": {"name": "POSCO홀딩스", "tv_symbol": "KRX:005490", "yahoo_symbol": "005490.KS"},
-    "105560.KS": {"name": "KB금융", "tv_symbol": "KRX:105560", "yahoo_symbol": "105560.KS"},
+# 참고용 회사명 매핑 (알려진 경우 표시용, 모르면 코드 그대로 표시)
+_KNOWN_KR_NAMES = {
+    "005930": "삼성전자", "000660": "SK하이닉스", "066570": "LG전자",
+    "035420": "네이버", "035720": "카카오", "005380": "현대차",
+    "051910": "LG화학", "207940": "삼성바이오로직스", "005490": "POSCO홀딩스",
+    "105560": "KB금융", "033780": "KT&G", "096770": "SK이노베이션",
+    "003670": "포스코퓨처엠", "068270": "셀트리온", "323410": "카카오뱅크",
 }
 
-# ============================================================================
-# 미국 주식 (NASDAQ / NYSE)
-# ============================================================================
-
-US_STOCKS: Dict[str, SymbolInfo] = {
-    "AAPL": {"name": "Apple", "tv_symbol": "NASDAQ:AAPL", "yahoo_symbol": "AAPL"},
-    "TSLA": {"name": "Tesla", "tv_symbol": "NASDAQ:TSLA", "yahoo_symbol": "TSLA"},
-    "MSFT": {"name": "Microsoft", "tv_symbol": "NASDAQ:MSFT", "yahoo_symbol": "MSFT"},
-    "GOOGL": {"name": "Alphabet", "tv_symbol": "NASDAQ:GOOGL", "yahoo_symbol": "GOOGL"},
-    "AMZN": {"name": "Amazon", "tv_symbol": "NASDAQ:AMZN", "yahoo_symbol": "AMZN"},
-    "NVDA": {"name": "NVIDIA", "tv_symbol": "NASDAQ:NVDA", "yahoo_symbol": "NVDA"},
-    "META": {"name": "Meta", "tv_symbol": "NASDAQ:META", "yahoo_symbol": "META"},
-    "NFLX": {"name": "Netflix", "tv_symbol": "NASDAQ:NFLX", "yahoo_symbol": "NFLX"},
+_KNOWN_US_NAMES = {
+    "AAPL": "Apple", "TSLA": "Tesla", "MSFT": "Microsoft",
+    "GOOGL": "Alphabet", "AMZN": "Amazon", "NVDA": "NVIDIA",
+    "META": "Meta", "NFLX": "Netflix",
 }
 
-# ============================================================================
-# 암호화폐 (데이터는 Yahoo "-USD", 차트는 Binance 피드)
-# ============================================================================
-
-CRYPTO: Dict[str, SymbolInfo] = {
-    "BTC": {"name": "Bitcoin", "tv_symbol": "BINANCE:BTCUSDT", "yahoo_symbol": "BTC-USD"},
-    "ETH": {"name": "Ethereum", "tv_symbol": "BINANCE:ETHUSDT", "yahoo_symbol": "ETH-USD"},
-    "XRP": {"name": "Ripple", "tv_symbol": "BINANCE:XRPUSDT", "yahoo_symbol": "XRP-USD"},
-    "SOL": {"name": "Solana", "tv_symbol": "BINANCE:SOLUSDT", "yahoo_symbol": "SOL-USD"},
-    "ADA": {"name": "Cardano", "tv_symbol": "BINANCE:ADAUSDT", "yahoo_symbol": "ADA-USD"},
-    "DOGE": {"name": "Dogecoin", "tv_symbol": "BINANCE:DOGEUSDT", "yahoo_symbol": "DOGE-USD"},
-    "BNB": {"name": "BNB", "tv_symbol": "BINANCE:BNBUSDT", "yahoo_symbol": "BNB-USD"},
-    "LINK": {"name": "Chainlink", "tv_symbol": "BINANCE:LINKUSDT", "yahoo_symbol": "LINK-USD"},
-    "MATIC": {"name": "Polygon", "tv_symbol": "BINANCE:MATICUSDT", "yahoo_symbol": "MATIC-USD"},
-    "AVAX": {"name": "Avalanche", "tv_symbol": "BINANCE:AVAXUSDT", "yahoo_symbol": "AVAX-USD"},
+_KNOWN_CRYPTO_NAMES = {
+    "BTC": "Bitcoin", "ETH": "Ethereum", "XRP": "Ripple", "SOL": "Solana",
+    "ADA": "Cardano", "DOGE": "Dogecoin", "BNB": "BNB", "LINK": "Chainlink",
+    "MATIC": "Polygon", "AVAX": "Avalanche",
 }
 
-# ============================================================================
-# 시장 카테고리 통합 카탈로그
-# ============================================================================
+CATEGORIES = ["🇰🇷 한국 주식", "🇺🇸 미국 주식", "₿ 암호화폐"]
 
-MARKET_CATALOG: Dict[str, Dict[str, SymbolInfo]] = {
-    "🇰🇷 한국 주식": KOREAN_STOCKS,
-    "🇺🇸 미국 주식": US_STOCKS,
-    "₿ 암호화폐": CRYPTO,
-}
-
-DEFAULT_SYMBOLS: Dict[str, list] = {
-    "🇰🇷 한국 주식": ["005930.KS"],
-    "🇺🇸 미국 주식": ["AAPL"],
-    "₿ 암호화폐": ["BTC"],
+CATEGORY_PLACEHOLDER = {
+    "🇰🇷 한국 주식": "예: 005930, 000660, 033780",
+    "🇺🇸 미국 주식": "예: AAPL, TSLA, NVDA",
+    "₿ 암호화폐": "예: BTC, ETH, SOL",
 }
 
 
-def get_symbol_info(category: str, symbol: str) -> SymbolInfo:
+def normalize_symbol(raw_input: str, category: str) -> Optional[dict]:
     """
-    특정 카테고리의 심볼 정보를 조회한다.
+    사용자 입력을 시장별 표준 심볼로 정규화한다.
 
     Args:
-        category: 시장 카테고리 (MARKET_CATALOG의 키)
-        symbol: 종목 심볼
+        raw_input: 사용자가 입력한 원본 문자열 (예: "005930", "AAPL", "btc").
+        category: 시장 카테고리 ("🇰🇷 한국 주식", "🇺🇸 미국 주식", "₿ 암호화폐").
 
     Returns:
-        SymbolInfo 딕셔너리 (name, tv_symbol, yahoo_symbol)
-
-    Raises:
-        KeyError: 카테고리 또는 심볼을 찾을 수 없는 경우
+        {"symbol": 표시용 심볼, "yahoo_symbol": Yahoo 조회용 심볼, "name": 표시 이름}
+        입력이 비어있으면 None.
     """
-    return MARKET_CATALOG[category][symbol]
+    text = raw_input.strip().upper()
+    if not text:
+        return None
+
+    if category == "🇰🇷 한국 주식":
+        # 순수 숫자(6자리) -> .KS 접미사 추가
+        code = re.sub(r"\.KS$", "", text)
+        if not re.match(r"^\d{6}$", code):
+            # 6자리 숫자가 아니면 그대로 시도 (사용자가 다른 형식을 입력했을 수 있음)
+            yahoo_symbol = text if text.endswith(".KS") else f"{text}.KS"
+            code = re.sub(r"\.KS$", "", yahoo_symbol)
+        else:
+            yahoo_symbol = f"{code}.KS"
+        name = _KNOWN_KR_NAMES.get(code, code)
+        return {"symbol": yahoo_symbol, "yahoo_symbol": yahoo_symbol, "name": name}
+
+    elif category == "🇺🇸 미국 주식":
+        name = _KNOWN_US_NAMES.get(text, text)
+        return {"symbol": text, "yahoo_symbol": text, "name": name}
+
+    elif category == "₿ 암호화폐":
+        # "BTC", "BTC-USD", "BTCUSDT" 등 다양한 입력을 base 심볼로 정리
+        base = re.sub(r"(-USD|USDT|USD)$", "", text)
+        yahoo_symbol = f"{base}-USD"
+        name = _KNOWN_CRYPTO_NAMES.get(base, base)
+        return {"symbol": base, "yahoo_symbol": yahoo_symbol, "name": name}
+
+    return None
 
 
-def format_symbol_label(category: str, symbol: str) -> str:
+def parse_symbol_list(raw_text: str, category: str) -> list[dict]:
     """
-    멀티셀렉트 등에서 사용할 사람이 읽기 좋은 라벨을 생성한다.
+    쉼표로 구분된 여러 심볼 입력을 파싱하여 정규화한다.
 
     Args:
-        category: 시장 카테고리
-        symbol: 종목 심볼
+        raw_text: "AAPL, TSLA, 005930" 형태의 쉼표 구분 문자열.
+        category: 시장 카테고리.
 
     Returns:
-        "005930.KS - 삼성전자" 형식의 문자열
+        정규화된 심볼 정보 딕셔너리 리스트 (중복 제거).
     """
-    info = get_symbol_info(category, symbol)
-    return f"{symbol} ({info['name']})"
+    if not raw_text:
+        return []
+
+    seen = set()
+    results = []
+    for part in raw_text.split(","):
+        info = normalize_symbol(part, category)
+        if info and info["yahoo_symbol"] not in seen:
+            seen.add(info["yahoo_symbol"])
+            results.append(info)
+    return results

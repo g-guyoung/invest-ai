@@ -2,7 +2,8 @@
 """
 Streamlit Multi-Market Investment Dashboard.
 
-시장: 한국 주식 / 미국 주식 / 암호화폐 (모두 Yahoo Finance 통일 + TradingView 차트)
+시장: 한국 주식 / 미국 주식 / 암호화폐 — 자유 텍스트 검색 + 통합 캔들스틱 차트
+     + AI 분석(Claude) + 가상 포트폴리오(페이퍼 트레이딩 MVP)
 
 Run: streamlit run src/ui/streamlit_app.py
 """
@@ -24,11 +25,16 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+# 환경변수/Secrets를 가장 먼저 로드한다 (이후 모든 모듈이 os.getenv로 값을 읽는다).
+from src.common.env_loader import load_environment, check_required_keys
+
+load_environment()
+
 from src.fetcher.fetcher_registry import FetcherRegistry
-from src.engine import indicators
 from src.engine.claude_analyzer import ClaudeAnalyzer
-from src.ui.symbol_catalog import MARKET_CATALOG, DEFAULT_SYMBOLS, get_symbol_info
-from src.ui.tradingview_widget import render_advanced_chart, render_symbol_overview
+from src.ui.symbol_catalog import CATEGORIES, CATEGORY_PLACEHOLDER, parse_symbol_list
+from src.ui.price_chart import build_price_chart
+from src.portfolio import session_portfolio as sp
 
 # ============================================================================
 # Streamlit Configuration
@@ -45,19 +51,15 @@ st.markdown(
     """
     <style>
     .main { padding-top: 0; }
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 15px;
-        border-radius: 10px;
-        margin: 10px 0;
-    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
+sp.init_portfolio(st.session_state)
+
 # ============================================================================
-# 캐시된 데이터 조회 (Yahoo Finance 통일 - Binance API 클라우드 차단 회피)
+# 캐시된 데이터 조회 (Yahoo Finance 통일 - 클라우드 API 차단 회피)
 # ============================================================================
 
 
@@ -69,19 +71,7 @@ def fetch_symbol_data(
     start_date: str | None,
     end_date: str | None,
 ) -> pd.DataFrame | None:
-    """
-    Yahoo Finance에서 OHLCV 데이터를 조회한다 (30분 캐시).
-
-    Args:
-        yahoo_symbol: Yahoo Finance 심볼 (예: "AAPL", "005930.KS", "BTC-USD").
-        interval: 캔들 간격.
-        limit: 조회 개수.
-        start_date: 시작일(YYYY-MM-DD).
-        end_date: 종료일(YYYY-MM-DD).
-
-    Returns:
-        OHLCV DataFrame 또는 실패 시 None.
-    """
+    """Yahoo Finance에서 OHLCV 데이터를 조회한다 (30분 캐시)."""
     try:
         return FetcherRegistry.get_ohlcv(
             symbol=yahoo_symbol,
@@ -97,114 +87,79 @@ def fetch_symbol_data(
 
 
 # ============================================================================
-# Sidebar: Market & Symbol Selection
+# Sidebar: 시장 선택 + 자유 텍스트 검색
 # ============================================================================
 
-st.sidebar.title("📊 시장 & 심볼")
+st.sidebar.title("📊 시장 & 검색")
 st.sidebar.divider()
 
-market_category = st.sidebar.radio(
-    "🌐 시장 선택",
-    options=list(MARKET_CATALOG.keys()),
-    index=0,
+market_category = st.sidebar.radio("🌐 시장 선택", options=CATEGORIES, index=0)
+
+search_text = st.sidebar.text_input(
+    "🔍 종목 검색 (쉼표로 여러 개)",
+    placeholder=CATEGORY_PLACEHOLDER[market_category],
+    help="원하는 종목 코드/티커를 자유롭게 입력하세요. 쉼표로 여러 개 입력 가능합니다.",
 )
 
-catalog = MARKET_CATALOG[market_category]
-
-selected_symbols = st.sidebar.multiselect(
-    "📈 종목 선택",
-    options=list(catalog.keys()),
-    default=DEFAULT_SYMBOLS[market_category],
-    format_func=lambda s: f"{s} · {catalog[s]['name']}",
-    help="추적할 종목을 하나 이상 선택하세요.",
-)
-
-# 차트 간격 (TradingView 형식: 1, 5, 15, 60, D, W, M)
-interval_labels = {
-    "1일": "D", "1주": "W", "1시간": "60", "15분": "15", "5분": "5",
-}
-selected_interval_label = st.sidebar.selectbox(
-    "⏱️ 차트 간격", options=list(interval_labels.keys()), index=0
-)
-tv_interval = interval_labels[selected_interval_label]
-
-# 백엔드 데이터(AI 분석용) 조회 간격은 일봉으로 고정 (안정성 우선)
-backend_interval = "1d"
-
-date_range = st.sidebar.date_input(
-    "📅 날짜 범위 (AI 분석용 데이터)",
-    value=(datetime.now() - timedelta(days=90), datetime.now()),
-    max_value=datetime.now(),
-)
+symbol_infos = parse_symbol_list(search_text, market_category)
 
 st.sidebar.divider()
-fetch_limit = st.sidebar.slider("📍 데이터 개수 (AI 분석용)", 30, 500, 100)
+fetch_limit = st.sidebar.slider("📍 조회 기간 (캔들 개수)", 30, 500, 150)
 st.sidebar.divider()
 enable_ai = st.sidebar.checkbox("🤖 AI 분석 활성화", value=True)
 
-st.sidebar.divider()
-st.sidebar.caption(
-    "💡 차트는 TradingView 실시간 위젯을 사용합니다. "
-    "AI 분석은 Yahoo Finance 데이터를 기반으로 합니다."
-)
+# API 키 상태 표시
+key_status = check_required_keys("ANTHROPIC_API_KEY")
+if not key_status["ANTHROPIC_API_KEY"]:
+    st.sidebar.warning("⚠️ ANTHROPIC_API_KEY가 설정되지 않았습니다. AI 분석이 동작하지 않습니다.")
 
 # ============================================================================
-# Main Content
+# Main
 # ============================================================================
 
 st.title("📈 투자 AI - 멀티마켓 대시보드")
-st.markdown(f"**시장:** {market_category} | **선택 종목:** {', '.join(selected_symbols) if selected_symbols else '없음'}")
 
-if not selected_symbols:
-    st.warning("⚠️ 사이드바에서 최소 하나의 종목을 선택해주세요.")
-    st.stop()
+if not symbol_infos:
+    st.info(f"👈 사이드바에서 **{market_category}** 종목을 검색해 입력해주세요. (예: {CATEGORY_PLACEHOLDER[market_category]})")
+    data_dict = {}
+else:
+    st.markdown(f"**시장:** {market_category} | **검색 종목:** {', '.join(i['symbol'] for i in symbol_infos)}")
 
-tab1, tab2, tab3 = st.tabs(["📊 실시간 차트", "🤖 AI 분석", "📋 포트폴리오"])
+    data_dict = {}
+    for info in symbol_infos:
+        df = fetch_symbol_data(info["yahoo_symbol"], "1d", fetch_limit, None, None)
+        if df is not None and not df.empty:
+            data_dict[info["symbol"]] = {"df": df, "name": info["name"], "yahoo_symbol": info["yahoo_symbol"]}
+        else:
+            st.warning(f"⚠️ {info['symbol']}: 데이터를 가져올 수 없습니다. 심볼을 다시 확인해주세요.")
+
+tab1, tab2, tab3 = st.tabs(["📊 차트", "🤖 AI 분석", "💰 포트폴리오"])
 
 # ============================================================================
-# Tab 1: 실시간 차트 (TradingView)
+# Tab 1: 통합 차트
 # ============================================================================
 
 with tab1:
-    main_symbol = st.selectbox(
-        "메인 차트 종목",
-        options=selected_symbols,
-        format_func=lambda s: f"{s} · {catalog[s]['name']}",
-    )
-    main_info = get_symbol_info(market_category, main_symbol)
+    if not data_dict:
+        st.info("검색된 종목이 없습니다.")
+    else:
+        chart_symbol = st.selectbox(
+            "차트로 볼 종목",
+            options=list(data_dict.keys()),
+            format_func=lambda s: f"{s} ({data_dict[s]['name']})",
+        )
+        entry = data_dict[chart_symbol]
+        fig = build_price_chart(entry["df"], title=f"{chart_symbol} · {entry['name']}", height=850)
+        st.plotly_chart(fig, use_container_width=True)
 
-    st.caption(f"실시간 차트 (RSI · MACD · 볼린저밴드 포함) — {main_info['name']}")
-    render_advanced_chart(
-        tv_symbol=main_info["tv_symbol"],
-        height=550,
-        interval=tv_interval,
-        show_studies=True,
-    )
-
-    if len(selected_symbols) > 1:
-        st.divider()
-        st.subheader("선택 종목 한눈에 보기")
-        overview_symbols = [
-            (catalog[s]["name"], catalog[s]["tv_symbol"]) for s in selected_symbols
-        ]
-        render_symbol_overview(overview_symbols, height=280)
-
-# ============================================================================
-# 백엔드 데이터 조회 (AI 분석 / 포트폴리오 공용)
-# ============================================================================
-
-data_dict: dict[str, pd.DataFrame] = {}
-for symbol in selected_symbols:
-    info = get_symbol_info(market_category, symbol)
-    df = fetch_symbol_data(
-        info["yahoo_symbol"],
-        backend_interval,
-        fetch_limit,
-        date_range[0].strftime("%Y-%m-%d") if len(date_range) > 0 else None,
-        date_range[1].strftime("%Y-%m-%d") if len(date_range) > 1 else None,
-    )
-    if df is not None and not df.empty:
-        data_dict[symbol] = df
+        latest = entry["df"].iloc[-1]
+        prev = entry["df"].iloc[-2] if len(entry["df"]) > 1 else latest
+        change = latest["close"] - prev["close"]
+        change_pct = (change / prev["close"] * 100) if prev["close"] else 0
+        col1, col2, col3 = st.columns(3)
+        col1.metric("현재가", f"{latest['close']:,.2f}")
+        col2.metric("변동", f"{change:+,.2f}", f"{change_pct:+.2f}%")
+        col3.metric("거래량", f"{latest['volume']:,.0f}")
 
 # ============================================================================
 # Tab 2: AI 분석
@@ -214,97 +169,112 @@ with tab2:
     st.subheader("🤖 AI 분석 (Claude)")
 
     if not enable_ai:
-        st.info("AI 분석이 비활성화되어 있습니다. 사이드바에서 활성화하여 AI 예측을 확인하세요.")
+        st.info("AI 분석이 비활성화되어 있습니다. 사이드바에서 활성화해주세요.")
     elif not data_dict:
-        st.warning("⚠️ AI 분석을 위한 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해주세요.")
+        st.info("먼저 사이드바에서 종목을 검색해주세요.")
     else:
         ai_symbol = st.selectbox(
             "AI 분석 대상 종목:", list(data_dict.keys()),
-            format_func=lambda s: f"{s} · {catalog[s]['name']}",
+            format_func=lambda s: f"{s} ({data_dict[s]['name']})",
             key="ai_symbol",
         )
-
-        df = data_dict[ai_symbol]
-
-        # 기술적 지표 계산 (AI 분석 입력용)
-        df_analysis = df.copy()
-        df_analysis["rsi"] = indicators.calc_rsi(df["close"], period=14)
-        macd_result = indicators.calc_macd(df["close"])
-        df_analysis["macd"] = macd_result["macd"]
-        df_analysis["macd_signal"] = macd_result["macd_signal"]
-        bb_result = indicators.calc_bollinger_bands(df["close"], period=20, num_std=2)
-        df_analysis["bb_upper"] = bb_result["bb_upper"]
-        df_analysis["bb_lower"] = bb_result["bb_lower"]
-
-        # 최신 지표 수치 표시
-        latest = df_analysis.iloc[-1]
-        ind_col1, ind_col2, ind_col3 = st.columns(3)
-        with ind_col1:
-            st.metric("RSI(14)", f"{latest['rsi']:.1f}" if pd.notna(latest['rsi']) else "N/A")
-        with ind_col2:
-            st.metric("MACD", f"{latest['macd']:.2f}" if pd.notna(latest['macd']) else "N/A")
-        with ind_col3:
-            st.metric("종가", f"{latest['close']:.2f}")
+        entry = data_dict[ai_symbol]
 
         with st.spinner("🔄 Claude AI로 분석 중..."):
             try:
                 analyzer = ClaudeAnalyzer()
-                result = analyzer.analyze(df_analysis[-50:], symbol=ai_symbol)
+                result = analyzer.analyze(entry["df"][-50:], symbol=ai_symbol)
 
                 col1, col2, col3 = st.columns(3)
-                with col1:
-                    signal_color = (
-                        "🟢" if result.signal == "BUY"
-                        else "🔴" if result.signal == "SELL"
-                        else "🟡"
-                    )
-                    st.metric("신호", f"{signal_color} {result.signal}")
-                with col2:
-                    st.metric("신뢰도", f"{result.confidence:.1%}")
-                with col3:
-                    st.metric("위험도", f"{result.risk_score:.2f}")
-
+                signal_color = (
+                    "🟢" if result.signal == "BUY"
+                    else "🔴" if result.signal == "SELL"
+                    else "🟡"
+                )
+                col1.metric("신호", f"{signal_color} {result.signal}")
+                col2.metric("신뢰도", f"{result.confidence:.1%}")
+                col3.metric("위험도", f"{result.risk_score:.2f}")
                 st.info(f"**분석 이유:**\n\n{result.reason}")
 
             except Exception as e:
                 st.error(f"❌ AI 분석 오류: {str(e)}")
 
 # ============================================================================
-# Tab 3: 포트폴리오 요약
+# Tab 3: 가상 포트폴리오 (페이퍼 트레이딩 MVP)
 # ============================================================================
 
 with tab3:
-    st.subheader("포트폴리오 요약")
+    st.subheader("💰 가상 포트폴리오 (페이퍼 트레이딩)")
+    st.caption(
+        "시장별로 가상자금 1,000,000을 배정해 매수/매도를 체험할 수 있습니다. "
+        "(자동 AI 매매 엔진은 다음 단계에서 연결됩니다.)"
+    )
 
-    if not data_dict:
-        st.warning("⚠️ 표시할 데이터가 없습니다.")
-    else:
-        portfolio_data = []
-        for symbol, df in data_dict.items():
-            info = get_symbol_info(market_category, symbol)
-            latest_price = df["close"].iloc[-1]
-            prev_price = df["close"].iloc[-2] if len(df) > 1 else latest_price
-            change = latest_price - prev_price
-            change_pct = (change / prev_price * 100) if prev_price != 0 else 0
+    current_prices = {
+        symbol: entry["df"]["close"].iloc[-1] for symbol, entry in data_dict.items()
+    }
 
-            portfolio_data.append({
-                "종목": f"{symbol} ({info['name']})",
-                "최신 가격": f"{latest_price:,.2f}",
-                "변동": f"{change:+,.2f}",
-                "변동률": f"{change_pct:+.2f}%",
-                "데이터 개수": len(df),
-            })
+    # ── 매수/매도 실행 (현재 조회 중인 시장) ──────────────────────────────
+    if data_dict:
+        st.markdown(f"#### 🛒 거래 실행 — {market_category}")
+        trade_symbol = st.selectbox(
+            "거래할 종목",
+            options=list(data_dict.keys()),
+            format_func=lambda s: f"{s} ({data_dict[s]['name']})",
+            key="trade_symbol",
+        )
+        price = current_prices[trade_symbol]
+        currency = sp.CURRENCY_SYMBOL[market_category]
+        st.write(f"현재가: **{currency}{price:,.2f}**")
 
-        st.dataframe(pd.DataFrame(portfolio_data), use_container_width=True)
+        buy_col, sell_col = st.columns(2)
+        with buy_col:
+            amount = st.number_input(
+                f"매수 금액 ({currency})", min_value=0.0, step=10000.0, value=100000.0, key="buy_amount"
+            )
+            if st.button("🟢 매수 실행", use_container_width=True):
+                ok, msg = sp.buy(
+                    st.session_state, market_category, trade_symbol,
+                    data_dict[trade_symbol]["name"], price, amount,
+                )
+                (st.success if ok else st.error)(msg)
 
-        st.subheader("통계")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("총 종목 수", len(data_dict))
-        with col2:
-            st.metric("총 데이터 개수", sum(len(df) for df in data_dict.values()))
-        with col3:
-            st.metric("시장", market_category)
+        with sell_col:
+            holding = st.session_state["portfolio"][market_category]["holdings"].get(trade_symbol)
+            max_qty = holding["qty"] if holding else 0.0
+            st.write(f"보유 수량: {max_qty:.4f}")
+            if st.button("🔴 전량 매도", use_container_width=True, disabled=max_qty <= 0):
+                ok, msg = sp.sell(st.session_state, market_category, trade_symbol, price)
+                (st.success if ok else st.error)(msg)
+
+        st.divider()
+
+    # ── 시장별 포트폴리오 요약 ──────────────────────────────────────────
+    st.markdown("#### 📊 시장별 요약")
+    total_all = 0.0
+    for category in sp.CATEGORIES:
+        prices_for_cat = current_prices if category == market_category else {}
+        summary = sp.get_summary(st.session_state, category, prices_for_cat)
+        total_all += summary["total"]
+        currency = sp.CURRENCY_SYMBOL[category]
+
+        with st.expander(f"{category} — 총 {currency}{summary['total']:,.0f} (손익 {summary['pnl']:+,.0f}, {summary['pnl_pct']:+.2f}%)", expanded=(category == market_category)):
+            c1, c2, c3 = st.columns(3)
+            c1.metric("현금", f"{currency}{summary['cash']:,.0f}")
+            c2.metric("평가금액", f"{currency}{summary['holdings_value']:,.0f}")
+            c3.metric("손익률", f"{summary['pnl_pct']:+.2f}%")
+
+            if summary["holdings"]:
+                st.dataframe(pd.DataFrame(summary["holdings"]), use_container_width=True)
+            else:
+                st.caption("보유 종목이 없습니다.")
+
+            if summary["history"]:
+                st.caption("최근 거래 내역")
+                st.dataframe(pd.DataFrame(summary["history"]), use_container_width=True)
+
+    st.divider()
+    st.metric("💼 전체 통산 자산 (3개 시장 합계, 통화 단위 상이)", f"{total_all:,.0f}")
 
 # ============================================================================
 # Footer
@@ -315,8 +285,9 @@ st.markdown(
     """
     ---
     **투자 AI 대시보드** | 멀티마켓 투자 분석 플랫폼
-    - **차트**: TradingView 실시간 위젯 (RSI · MACD · 볼린저밴드 내장)
+    - **차트**: 자체 제작 캔들스틱 + 거래량 + RSI + MACD + 볼린저밴드
     - **데이터**: Yahoo Finance (한국/미국 주식, 암호화폐 통일)
     - **AI 분석**: Claude API 기반 거래 신호
+    - **포트폴리오**: 가상 페이퍼 트레이딩 (시장별 1,000,000 배정)
     """
 )
