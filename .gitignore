@@ -8,3 +8,8 @@ data/*.csv
 .DS_Store
 .vscode/
 .idea/
+
+# 비밀번호/시크릿 메모 파일 (실수로 커밋되지 않도록)
+*비밀번호*.txt
+*password*.txt
+*secret*.txt
