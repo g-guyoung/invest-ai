@@ -114,7 +114,7 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
   - ⚠️ `src/ui/tradingview_widget.py`는 더 이상 코드에서 사용하지 않지만, 로컬 파일 잠금 문제로
     삭제하지 못해 죽은 코드로 남아있음. 언젠가 여유 있을 때 정리.
 
-- **Phase 5 Part 3 (포트폴리오 영구 저장 + AI 자동매매 엔진): 코드 완료, Supabase 프로젝트 생성만 대기 중** (2026-08-04)
+- **Phase 5 Part 3 (포트폴리오 영구 저장 + AI 자동매매 엔진): 완료, 실사용 시작됨** (2026-08-04)
   - ✅ **포트폴리오 영구 저장 (Repository Pattern)** — `src/portfolio/base_repository.py`(인터페이스),
     `session_repository.py`(세션 폴백, 기존 동작과 동일), `supabase_repository.py`(Supabase 영구 저장),
     `repository_factory.py`(SUPABASE_URL/KEY 설정+연결 성공 시 자동으로 Supabase 사용, 그 외에는
@@ -123,31 +123,48 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
   - ✅ `scripts/init_db.sql`에 `wallets`/`wallet_holdings`/`wallet_trades` 테이블 추가
     (기존 `portfolio`/`orders` 테이블은 symbols 사전 등록 FK가 필요해 자유 검색 심볼과 안 맞아서
     건드리지 않고 그대로 둠 — 새 테이블은 symbol을 문자열로 직접 저장).
-  - ✅ **AI 자동 트레이딩 엔진** (`src/trading/auto_trader.py`, 신규) — `AutoTrader` 클래스가
-    감시 종목(`DEFAULT_WATCHLIST`: 삼성전자/SK하이닉스/AAPL/TSLA/BTC/ETH)을 순회하며 Claude 분석 →
-    신뢰도/위험도 규칙(`TradingConfig`) 통과 시 `session_portfolio.buy()/sell()`을 그대로 재사용해
+  - ✅ **Supabase 프로젝트 실제 생성 완료** — `invest-ai`(Seoul 리전), URL
+    `https://qvyjphmowsjcvtsqmsyy.supabase.co`. `init_db.sql` 실행 완료(RLS는 미적용 —
+    단일 사용자 MVP라 anon key로 서버사이드에서만 접근하므로 지금 단계에서는 허용, 다중 사용자
+    단계(Phase 6+)에서 Supabase Auth + RLS 정책 설계 필요, 다음 개선사항으로 기록).
+    로컬 `.env`와 Streamlit Cloud Secrets에 `SUPABASE_URL`/`SUPABASE_KEY` 등록 완료 — 실제로
+    새로고침해도 포트폴리오가 유지되는 것까지 확인됨.
+  - ✅ **AI 자동 트레이딩 엔진** (`src/trading/auto_trader.py`) — `AutoTrader` 클래스가 매 실행마다
+    시장별 후보 풀(`CANDIDATE_POOLS`)에서 무작위로 감시 종목을 구성(`build_daily_watchlist`)해
+    Claude로 분석 → 신뢰도/위험도 규칙 통과 시 `session_portfolio.buy()/sell()`을 그대로 재사용해
     자동 체결한다. `python -m src.trading.auto_trader`로 단독 실행 가능.
+  - ✅ **시장별 분석 프로필** (`src/engine/market_profiles.py`, 신규) — 한국 주식(정규장/외국인 수급),
+    미국 주식(실적/연준 정책), 암호화폐(24시간/고변동성)마다 다른 프롬프트 맥락을 Claude에게
+    전달하고, 리스크 파라미터도 시장별로 다르게 적용한다(암호화폐는 1회 매수 비중을 더 보수적으로:
+    `max_position_pct` 0.2 vs 주식 0.3, `max_risk_score` 0.6 vs 주식 0.7). `AutoTrader`에 명시적
+    `config`를 안 주면 종목별 시장 프로필이 자동 적용되고, Streamlit "AI 분석" 탭도 동일 맥락을 쓴다.
+  - ✅ **감시 종목 다양화** — 기존 고정 6종목(삼성전자/SK하이닉스/AAPL/TSLA/BTC/ETH)을 시장별
+    후보 풀(대형주 2개 + 중소형주 여러 개, 총 KR 12 / US 12 / 암호화폐 8종목)로 확장하고, 매 실행마다
+    카테고리당 3개씩 무작위로 뽑아 분석하도록 바꿨다 — 매번 유명 종목만 반복 거래하지 않기 위함.
+    (완전한 스크리너 연동은 아직 없어 임의 큐레이션한 풀 안에서만 순환함 — 다음 개선사항으로 기록.)
   - ✅ **스케줄러** — `.github/workflows/auto_trade.yml` (GitHub Actions, 매일 00:30 UTC = 한국시간
-    09:30 cron + 수동 실행 버튼). **단, GitHub 저장소 Settings → Secrets에 `ANTHROPIC_API_KEY`/
-    `SUPABASE_URL`/`SUPABASE_KEY`를 등록해야 실제로 동작함 (사용자 액션 필요, 아래 참고).**
-  - ✅ pytest 36개 신규 테스트 전부 통과 (`test_portfolio_repository.py`, `test_session_portfolio.py`,
-    `test_auto_trader.py` — 정상/실패/엣지 케이스 + 저장소 폴백 시나리오 포함).
-  - ⚠️ **아직 Supabase 프로젝트가 실제로 없어서(SUPABASE_URL/KEY 미설정), 지금 배포된 앱은 여전히
-    세션 저장소로 자동 폴백 중 — 위 기능들은 "키만 넣으면 바로 동작"하는 상태이지 아직 실사용 중은 아님.**
+    09:30 cron + 수동 실행 버튼). GitHub 저장소 Secrets(`ANTHROPIC_API_KEY`/`SUPABASE_URL`/
+    `SUPABASE_KEY`) 등록 완료, 수동 실행(workflow_dispatch)으로 실제 동작 확인됨(58초, 6개 종목
+    분석, Supabase 연결/조회 성공 — 이때는 전부 신뢰도 부족으로 관망했음, 정상 동작).
+  - ✅ pytest 47개 신규 테스트 전부 통과 (`test_portfolio_repository.py`, `test_session_portfolio.py`,
+    `test_auto_trader.py`, `test_market_profiles.py` — 정상/실패/엣지 케이스 + 저장소 폴백 + 시장별
+    설정 자동 적용 시나리오 포함).
+  - GitHub Actions에 `.github/workflows/*.yml` push하려면 PAT에 **Workflows: Read and write** 권한이
+    별도로 필요했음(기존 Contents 권한만으로는 거부됨) — Fine-grained PAT Edit에서 추가함, 기록해둠.
 
-### 다음 할 일 (Phase 5 Part 3 마무리 — 사용자 액션만 남음)
+### 다음 할 일 (Phase 5 Part 3 마무리 — 완료, 운영 관찰 단계)
 
 사용자 목표: **Claude가 직접 한국주식/미국주식/암호화폐에 각 100만원(총 300만원) 가상 투자금으로
 1~2개월간 매일 자동으로 페이퍼 트레이딩을 하고, 그 결과를 실시간 대시보드에서 지켜보는 것.**
-코드(영구 저장 + 자동매매 엔진 + 스케줄러)는 다 준비됐고, 남은 건 아래 사용자 액션 2가지뿐이다.
+필요한 사용자 액션(Supabase 프로젝트 생성, GitHub Actions Secrets 등록)이 모두 끝나서
+2026-08-04부터 매일 09:30 KST에 실제로 자동 운영이 돌아가는 중이다.
 
-남은 작업 우선순위:
-1. **Supabase 프로젝트 실제 생성** (사용자가 https://supabase.com 에서 무료 프로젝트 생성 →
-   `scripts/init_db.sql` 실행 → URL/anon key를 Streamlit Cloud Secrets에 추가 — Claude가 대신 못 함)
-2. **GitHub Actions Secrets 등록** (저장소 Settings → Secrets and variables → Actions에
-   `ANTHROPIC_API_KEY`/`SUPABASE_URL`/`SUPABASE_KEY` 등록 — 이것도 사용자만 할 수 있는 액션)
-3. 위 2개가 끝나면 GitHub Actions가 매일 자동으로 `auto_trader`를 실행하며 실제로 1~2개월
-   자동 운영이 시작된다 (코드 추가 작업 없이 바로 시작 가능).
+남은 일:
+1. 매일 자동 실행 결과를 지켜보면서, Claude가 계속 낮은 신뢰도(예: 0.55 근처)로 관망만 하면
+   `min_confidence` 기준(현재 0.6)을 낮출지 판단 — 며칠치 로그를 더 모아보고 결정하기로 함.
+2. 스크리너 연동해서 `CANDIDATE_POOLS`를 수동 큐레이션이 아니라 실제 시장 전체에서 뽑도록 확장
+   (진짜 "듣도 보도 못한" 초소형주까지 다루려면 필요).
+3. 다중 사용자 단계로 갈 때 Supabase RLS 정책 설계 (지금은 단일 사용자라 미적용).
 
 ### 알려진 이슈 / 운영 메모
 - **로컬(Windows) Git lock 파일 문제가 자주 발생함**: `.git/index.lock`, `.git/HEAD.lock` 등이 남아

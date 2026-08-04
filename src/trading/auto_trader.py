@@ -7,13 +7,21 @@ AI 자동 트레이딩 엔진 (Phase 5 Part 3).
 
 동작 개요
 ---------
-1. 감시 종목 목록(watchlist)을 순회하며 Yahoo Finance에서 OHLCV 데이터를 조회한다.
-2. 기술적 지표를 추가하고 ClaudeAnalyzer(BaseAnalyzer)로 분석해
-   {signal, confidence, reason, risk_score}를 얻는다.
-3. 리스크 규칙(TradingConfig)을 통과하면 session_portfolio.buy()/sell()을
-   호출해 가상 매매를 실행한다 — 기존 수동 매매(Streamlit UI)와 완전히
-   동일한 검증/계산 로직을 재사용한다 (중복 코드 없음).
-4. 포트폴리오 저장소가 Supabase로 연결되어 있으면 결과가 영구 저장되고,
+1. 매 실행마다 시장별 후보 풀(CANDIDATE_POOLS)에서 몇 개씩 무작위로 뽑아
+   감시 종목을 구성한다 (build_daily_watchlist) — 매번 삼성전자/애플/테슬라
+   같은 유명 종목만 반복 거래하지 않고, 덜 알려진 중소형 종목까지 골고루
+   사고파는 연습을 하도록 하기 위함이다.
+2. 종목마다 Yahoo Finance에서 OHLCV 데이터를 조회하고 기술적 지표를 추가한다.
+3. ClaudeAnalyzer(BaseAnalyzer)로 분석해 {signal, confidence, reason, risk_score}를
+   얻는다 — 이때 시장별 맥락(market_profiles.MarketProfile.prompt_context)을
+   함께 전달해, 한국장/미국장/암호화폐의 서로 다른 특성(거래시간, 변동성,
+   영향 요인)을 반영한 판단을 받는다.
+4. 리스크 규칙을 통과하면 session_portfolio.buy()/sell()을 호출해 가상
+   매매를 실행한다 — 기존 수동 매매(Streamlit UI)와 완전히 동일한
+   검증/계산 로직을 재사용한다 (중복 코드 없음). 리스크 규칙(TradingConfig)은
+   명시적으로 주지 않으면 시장별 기본값(market_profiles)을 자동 적용한다
+   (암호화폐는 변동성이 크므로 1회 매수 비중을 더 보수적으로 잡는 식).
+5. 포트폴리오 저장소가 Supabase로 연결되어 있으면 결과가 영구 저장되고,
    아니라면(로컬 테스트, Supabase 미설정 등) 세션(plain dict) 저장소로
    자동 폴백한다 — 이 모듈은 어느 쪽인지 신경 쓸 필요가 없다.
 
@@ -28,14 +36,22 @@ GitHub Actions로 매일 자동 실행한다 (.github/workflows/auto_trade.yml �
 - 최소 신뢰도(min_confidence) 미만이면 매매하지 않고 관망한다.
 - 위험도(risk_score)가 max_risk_score를 넘으면 BUY를 보류한다.
 - 1회 매수 금액은 카테고리 보유 현금의 max_position_pct를 넘지 않으며,
-  신뢰도가 높을수록 비중을 키운다(선형 스케일).
+  신뢰도가 높을수록 비중을 키운다(선형 스케일). 시장별 기본값은
+  market_profiles.MARKET_PROFILES 참고 (암호화폐는 더 보수적).
 - Stop Loss / ATR Stop / Daily Loss Limit / Max Drawdown 등은 다음 단계에서
   거래 이력이 쌓인 뒤 확장한다 (CLAUDE.md 리스크 관리 원칙 참고).
+
+종목 풀 관련 알려진 한계
+------------------------
+- CANDIDATE_POOLS는 실제 스크리너 API 없이 수동으로 큐레이션한 목록이다
+  (완전히 무작위인 초소형주까지는 다루지 않는다). 스크리너를 연동하면
+  더 넓은 유니버스에서 자동으로 후보를 뽑을 수 있다 (다음 단계 후보).
 """
 
 from __future__ import annotations
 
 import logging
+import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +64,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src.common.env_loader import load_environment
 from src.engine.base_analyzer import AnalysisResult, AnalyzerError, BaseAnalyzer, Signal
 from src.engine.indicators import add_indicators
+from src.engine.market_profiles import MarketProfile, get_profile
 from src.fetcher.base_fetcher import FetcherError
 from src.fetcher.fetcher_registry import FetcherRegistry
 from src.portfolio import session_portfolio as sp
@@ -55,7 +72,7 @@ from src.portfolio import session_portfolio as sp
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True)
 class WatchlistItem:
     """자동매매 감시 대상 1개 종목.
 
@@ -72,16 +89,90 @@ class WatchlistItem:
     name: str
 
 
-# 기본 감시 종목 (Phase 5 Part 3 최초 버전).
-# 향후 설정 파일/Supabase 테이블로 이전해 사용자가 직접 편집할 수 있게 확장 가능.
-DEFAULT_WATCHLIST: list[WatchlistItem] = [
+# ============================================================================
+# 시장별 후보 풀 — 대형주(익숙한 종목) + 중소형주(덜 알려진 종목)를 섞어서,
+# 매일 다른 조합을 거래하며 다양한 종목을 사고파는 연습을 하도록 한다.
+# ============================================================================
+
+_KR_POOL: list[WatchlistItem] = [
+    # 대형주 (기준점 역할)
     WatchlistItem("🇰🇷 한국 주식", "005930.KS", "005930", "삼성전자"),
     WatchlistItem("🇰🇷 한국 주식", "000660.KS", "000660", "SK하이닉스"),
+    # 중견/중소형주 (상대적으로 덜 유명한 종목)
+    WatchlistItem("🇰🇷 한국 주식", "035420.KS", "035420", "NAVER"),
+    WatchlistItem("🇰🇷 한국 주식", "035720.KS", "035720", "카카오"),
+    WatchlistItem("🇰🇷 한국 주식", "051910.KS", "051910", "LG화학"),
+    WatchlistItem("🇰🇷 한국 주식", "006400.KS", "006400", "삼성SDI"),
+    WatchlistItem("🇰🇷 한국 주식", "207940.KS", "207940", "삼성바이오로직스"),
+    WatchlistItem("🇰🇷 한국 주식", "068270.KS", "068270", "셀트리온"),
+    WatchlistItem("🇰🇷 한국 주식", "003670.KS", "003670", "포스코퓨처엠"),
+    WatchlistItem("🇰🇷 한국 주식", "096770.KS", "096770", "SK이노베이션"),
+    WatchlistItem("🇰🇷 한국 주식", "011200.KS", "011200", "HMM"),
+    WatchlistItem("🇰🇷 한국 주식", "010130.KS", "010130", "고려아연"),
+]
+
+_US_POOL: list[WatchlistItem] = [
+    # 대형주 (기준점 역할)
     WatchlistItem("🇺🇸 미국 주식", "AAPL", "AAPL", "Apple"),
     WatchlistItem("🇺🇸 미국 주식", "TSLA", "TSLA", "Tesla"),
+    # 중소형 성장주 (상대적으로 덜 유명한 종목)
+    WatchlistItem("🇺🇸 미국 주식", "PLTR", "PLTR", "Palantir"),
+    WatchlistItem("🇺🇸 미국 주식", "SOFI", "SOFI", "SoFi Technologies"),
+    WatchlistItem("🇺🇸 미국 주식", "RIVN", "RIVN", "Rivian"),
+    WatchlistItem("🇺🇸 미국 주식", "U", "U", "Unity Software"),
+    WatchlistItem("🇺🇸 미국 주식", "RBLX", "RBLX", "Roblox"),
+    WatchlistItem("🇺🇸 미국 주식", "DKNG", "DKNG", "DraftKings"),
+    WatchlistItem("🇺🇸 미국 주식", "CELH", "CELH", "Celsius Holdings"),
+    WatchlistItem("🇺🇸 미국 주식", "IONQ", "IONQ", "IonQ"),
+    WatchlistItem("🇺🇸 미국 주식", "ASTS", "ASTS", "AST SpaceMobile"),
+    WatchlistItem("🇺🇸 미국 주식", "HOOD", "HOOD", "Robinhood"),
+]
+
+_CRYPTO_POOL: list[WatchlistItem] = [
+    # 대형 코인 (기준점 역할)
     WatchlistItem("₿ 암호화폐", "BTC-USD", "BTC", "Bitcoin"),
     WatchlistItem("₿ 암호화폐", "ETH-USD", "ETH", "Ethereum"),
+    # 중소형 알트코인 (상대적으로 덜 유명한 코인)
+    WatchlistItem("₿ 암호화폐", "XRP-USD", "XRP", "Ripple"),
+    WatchlistItem("₿ 암호화폐", "SOL-USD", "SOL", "Solana"),
+    WatchlistItem("₿ 암호화폐", "ADA-USD", "ADA", "Cardano"),
+    WatchlistItem("₿ 암호화폐", "DOGE-USD", "DOGE", "Dogecoin"),
+    WatchlistItem("₿ 암호화폐", "LINK-USD", "LINK", "Chainlink"),
+    WatchlistItem("₿ 암호화폐", "AVAX-USD", "AVAX", "Avalanche"),
 ]
+
+CANDIDATE_POOLS: dict[str, list[WatchlistItem]] = {
+    "🇰🇷 한국 주식": _KR_POOL,
+    "🇺🇸 미국 주식": _US_POOL,
+    "₿ 암호화폐": _CRYPTO_POOL,
+}
+
+# 하위 호환용 — 이전 버전은 고정 6종목을 썼다. 이제는 build_daily_watchlist()로
+# 매번 다르게 구성하는 것을 기본으로 하지만, 필요 시 참고용으로 남겨둔다.
+DEFAULT_WATCHLIST: list[WatchlistItem] = [pool[0] for pool in CANDIDATE_POOLS.values()] + [
+    pool[1] for pool in CANDIDATE_POOLS.values()
+]
+
+
+def build_daily_watchlist(
+    sample_size: int = 3, rng: Optional[random.Random] = None
+) -> list[WatchlistItem]:
+    """카테고리별 후보 풀에서 매번 다른 조합을 무작위로 추출한다.
+
+    Args:
+        sample_size: 카테고리(시장)당 뽑을 종목 수. 풀보다 크면 풀 전체를 쓴다.
+        rng: 난수 생성기. 생략하면 매 실행마다 다른 결과(OS 엔트로피 기반)가
+            나온다. 테스트에서 결과를 고정하고 싶으면 시드를 준 random.Random을 넘긴다.
+
+    Returns:
+        카테고리별로 sample_size개씩 뽑은 WatchlistItem 리스트.
+    """
+    rng = rng or random.Random()
+    watchlist: list[WatchlistItem] = []
+    for category, pool in CANDIDATE_POOLS.items():
+        k = min(sample_size, len(pool))
+        watchlist.extend(rng.sample(pool, k))
+    return watchlist
 
 
 @dataclass
@@ -99,6 +190,16 @@ class TradingConfig:
     max_risk_score: float = 0.7
     max_position_pct: float = 0.3
     min_trade_amount: float = 10_000.0
+
+    @classmethod
+    def from_profile(cls, profile: MarketProfile) -> "TradingConfig":
+        """MarketProfile의 리스크 파라미터로 TradingConfig를 만든다."""
+        return cls(
+            min_confidence=profile.min_confidence,
+            max_risk_score=profile.max_risk_score,
+            max_position_pct=profile.max_position_pct,
+            min_trade_amount=profile.min_trade_amount,
+        )
 
 
 @dataclass
@@ -121,37 +222,58 @@ class AutoTrader:
         analyzer: BaseAnalyzer,
         config: Optional[TradingConfig] = None,
         watchlist: Optional[list[WatchlistItem]] = None,
+        sample_size: int = 3,
+        rng: Optional[random.Random] = None,
     ) -> None:
         """AutoTrader를 초기화한다.
 
         Args:
             analyzer: BaseAnalyzer 구현체 (예: ClaudeAnalyzer). 테스트 시 mock 주입 가능.
-            config: 리스크/포지션 규칙. 생략 시 기본값(TradingConfig()) 사용.
-            watchlist: 감시 종목 목록. 생략 시 DEFAULT_WATCHLIST 사용.
+            config: 리스크/포지션 규칙. 생략하면(None) 종목마다 시장별 기본값
+                (market_profiles.MARKET_PROFILES)을 자동으로 적용한다.
+                명시적으로 지정하면 모든 종목에 동일하게 적용된다.
+            watchlist: 감시 종목 목록. 생략하면 build_daily_watchlist()로
+                시장별 후보 풀에서 매번 무작위로 구성한다.
+            sample_size: watchlist를 생략했을 때, 카테고리(시장)당 뽑을 종목 수.
+            rng: watchlist를 생략했을 때 사용할 난수 생성기 (테스트용).
         """
         self.analyzer = analyzer
-        self.config = config or TradingConfig()
-        self.watchlist = watchlist if watchlist is not None else DEFAULT_WATCHLIST
+        self.config = config
+        self.watchlist = (
+            watchlist if watchlist is not None
+            else build_daily_watchlist(sample_size=sample_size, rng=rng)
+        )
 
-    def _decide_position_size(self, cash: float, confidence: float) -> float:
+    def _resolve_config(self, item: WatchlistItem) -> TradingConfig:
+        """종목에 적용할 TradingConfig를 결정한다.
+
+        명시적으로 config가 주어졌으면 모든 종목에 그대로 쓰고, 아니면
+        종목의 시장 카테고리에 맞는 기본 프로필(market_profiles)에서 만든다.
+        """
+        if self.config is not None:
+            return self.config
+        return TradingConfig.from_profile(get_profile(item.category))
+
+    def _decide_position_size(self, cash: float, confidence: float, cfg: TradingConfig) -> float:
         """신뢰도에 비례해 매수 금액을 계산한다 (Position Sizing).
 
-        min_confidence~1.0 구간을 max_position_pct의 절반~전체 비중으로
+        cfg.min_confidence~1.0 구간을 cfg.max_position_pct의 절반~전체 비중으로
         선형 스케일한다. 신뢰도가 낮을수록 작게, 높을수록 크게 베팅한다.
 
         Args:
             cash: 해당 카테고리의 현재 보유 현금.
             confidence: AI 분석 신뢰도(0.0~1.0, 이미 min_confidence 이상으로 필터링됨).
+            cfg: 적용할 리스크 설정.
 
         Returns:
             매수에 사용할 금액.
         """
-        denom = 1 - self.config.min_confidence
+        denom = 1 - cfg.min_confidence
         scale = (
-            min(max((confidence - self.config.min_confidence) / denom, 0.0), 1.0)
+            min(max((confidence - cfg.min_confidence) / denom, 0.0), 1.0)
             if denom > 0 else 1.0
         )
-        pct = self.config.max_position_pct * (0.5 + 0.5 * scale)
+        pct = cfg.max_position_pct * (0.5 + 0.5 * scale)
         return cash * pct
 
     def run_once(self, state: dict, item: WatchlistItem) -> TradeDecision:
@@ -167,6 +289,8 @@ class AutoTrader:
             순회가 한 종목의 오류로 멈추면 안 되기 때문이다.
         """
         decision = TradeDecision(item=item)
+        cfg = self._resolve_config(item)
+        profile = get_profile(item.category)
         try:
             df = FetcherRegistry.get_ohlcv(
                 symbol=item.yahoo_symbol, market="yahoo", interval="1d", limit=100,
@@ -176,7 +300,9 @@ class AutoTrader:
                 return decision
 
             df = add_indicators(df)
-            result: AnalysisResult = self.analyzer.analyze(df.tail(50), symbol=item.yahoo_symbol)
+            result: AnalysisResult = self.analyzer.analyze(
+                df.tail(50), symbol=item.yahoo_symbol, market_context=profile.prompt_context,
+            )
             decision.signal = result.signal
             decision.confidence = result.confidence
 
@@ -184,19 +310,19 @@ class AutoTrader:
             sp.init_portfolio(state)
             book = state["portfolio"][item.category]
 
-            if result.confidence < self.config.min_confidence:
+            if result.confidence < cfg.min_confidence:
                 decision.message = (
-                    f"신뢰도 부족({result.confidence:.2f} < {self.config.min_confidence}) - 관망"
+                    f"신뢰도 부족({result.confidence:.2f} < {cfg.min_confidence}) - 관망"
                 )
                 return decision
 
             if result.signal == Signal.BUY:
-                if result.risk_score > self.config.max_risk_score:
+                if result.risk_score > cfg.max_risk_score:
                     decision.message = f"위험도 과다({result.risk_score:.2f}) - 매수 보류"
                     return decision
 
-                amount = self._decide_position_size(book["cash"], result.confidence)
-                if amount < self.config.min_trade_amount:
+                amount = self._decide_position_size(book["cash"], result.confidence, cfg)
+                if amount < cfg.min_trade_amount:
                     decision.message = f"매수 가능 금액 부족({amount:,.0f})"
                     return decision
 
@@ -254,13 +380,18 @@ class AutoTrader:
 
 
 def main() -> None:
-    """CLI 진입점: 감시 종목 전체에 대해 자동매매를 1회 실행한다."""
+    """CLI 진입점: 오늘의 감시 종목(시장별 후보 풀에서 무작위 추출)에 대해 자동매매를 1회 실행한다."""
     logging.basicConfig(level=logging.INFO)
     load_environment()
 
     from src.engine.claude_analyzer import ClaudeAnalyzer
 
-    trader = AutoTrader(analyzer=ClaudeAnalyzer())
+    watchlist = build_daily_watchlist(sample_size=3)
+    logger.info(
+        "오늘의 감시 종목: " + ", ".join(f"{i.category}:{i.display_symbol}" for i in watchlist)
+    )
+
+    trader = AutoTrader(analyzer=ClaudeAnalyzer(), watchlist=watchlist)
     decisions = trader.run_all()
 
     executed = sum(1 for d in decisions if d.executed)

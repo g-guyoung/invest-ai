@@ -18,9 +18,11 @@ from src.engine.base_analyzer import AnalysisResult, AnalyzerError, BaseAnalyzer
 from src.fetcher.base_fetcher import FetcherError
 from src.portfolio import repository_factory
 from src.trading.auto_trader import (
+    CANDIDATE_POOLS,
     AutoTrader,
     TradingConfig,
     WatchlistItem,
+    build_daily_watchlist,
 )
 
 
@@ -44,9 +46,13 @@ class _FixedAnalyzer(BaseAnalyzer):
         self._result = result
         self._error = error
         self.call_count = 0
+        self.last_market_context: str | None = None
 
-    def analyze(self, df: pd.DataFrame, symbol: str) -> AnalysisResult:
+    def analyze(
+        self, df: pd.DataFrame, symbol: str, market_context: str | None = None
+    ) -> AnalysisResult:
         self.call_count += 1
+        self.last_market_context = market_context
         if self._error:
             raise self._error
         return self._result
@@ -207,6 +213,92 @@ def test_run_once_handles_analyzer_error_without_raising(monkeypatch):
 
     assert decision.executed is False
     assert decision.error is not None
+
+
+# ── 시장별 맥락 / 리스크 설정 자동 적용 ─────────────────────
+def test_run_once_passes_market_context_to_analyzer(monkeypatch):
+    _patch_ohlcv(monkeypatch, _make_ohlcv_df())
+    analyzer = _FixedAnalyzer(AnalysisResult(
+        signal=Signal.HOLD, confidence=0.9, reason="x", risk_score=0.1,
+    ))
+    crypto_item = WatchlistItem("₿ 암호화폐", "BTC-USD", "BTC", "Bitcoin")
+    trader = AutoTrader(analyzer=analyzer)
+
+    trader.run_once({}, crypto_item)
+
+    assert analyzer.last_market_context is not None
+    assert "24시간" in analyzer.last_market_context  # 암호화폐 프로필의 맥락 문구
+
+
+def test_default_config_uses_stricter_crypto_profile(monkeypatch):
+    """config를 명시하지 않으면 암호화폐는 주식보다 더 보수적인 리스크 설정을 써야 한다."""
+    _patch_ohlcv(monkeypatch, _make_ohlcv_df())
+    # 위험도 0.65는 주식 기본값(max_risk_score=0.7)은 통과하지만
+    # 암호화폐 기본값(max_risk_score=0.6)은 통과하지 못해야 한다.
+    analyzer = _FixedAnalyzer(AnalysisResult(
+        signal=Signal.BUY, confidence=0.9, reason="x", risk_score=0.65,
+    ))
+    crypto_item = WatchlistItem("₿ 암호화폐", "BTC-USD", "BTC", "Bitcoin")
+    trader = AutoTrader(analyzer=analyzer)  # config=None -> 시장별 프로필 자동 적용
+
+    decision = trader.run_once({}, crypto_item)
+
+    assert decision.executed is False
+    assert "위험도 과다" in decision.message
+
+
+def test_explicit_config_overrides_market_profile(monkeypatch):
+    """config를 명시하면 시장과 상관없이 그 값을 그대로 써야 한다."""
+    _patch_ohlcv(monkeypatch, _make_ohlcv_df())
+    analyzer = _FixedAnalyzer(AnalysisResult(
+        signal=Signal.BUY, confidence=0.9, reason="x", risk_score=0.65,
+    ))
+    crypto_item = WatchlistItem("₿ 암호화폐", "BTC-USD", "BTC", "Bitcoin")
+    trader = AutoTrader(analyzer=analyzer, config=TradingConfig(max_risk_score=0.9))
+
+    decision = trader.run_once({}, crypto_item)
+
+    assert decision.executed is True  # 명시적 config(0.9)는 risk_score 0.65를 통과시켜야 함
+
+
+# ── 감시 종목 풀 / 무작위 구성 ──────────────────────────────
+def test_candidate_pools_cover_all_categories():
+    from src.portfolio.constants import CATEGORIES
+
+    assert set(CANDIDATE_POOLS.keys()) == set(CATEGORIES)
+    for category, pool in CANDIDATE_POOLS.items():
+        assert len(pool) >= 3
+        assert all(item.category == category for item in pool)
+
+
+def test_build_daily_watchlist_samples_per_category():
+    watchlist = build_daily_watchlist(sample_size=2, rng=__import__("random").Random(42))
+
+    by_category: dict[str, int] = {}
+    for item in watchlist:
+        by_category[item.category] = by_category.get(item.category, 0) + 1
+
+    assert all(count == 2 for count in by_category.values())
+    assert len(by_category) == len(CANDIDATE_POOLS)
+
+
+def test_build_daily_watchlist_is_deterministic_with_same_seed():
+    import random
+
+    watchlist_a = build_daily_watchlist(sample_size=2, rng=random.Random(7))
+    watchlist_b = build_daily_watchlist(sample_size=2, rng=random.Random(7))
+
+    assert [i.display_symbol for i in watchlist_a] == [i.display_symbol for i in watchlist_b]
+
+
+def test_auto_trader_without_explicit_watchlist_builds_one(monkeypatch):
+    """watchlist를 안 넘기면 후보 풀에서 자동으로 구성돼야 한다 (매번 6개 고정이 아님)."""
+    analyzer = _FixedAnalyzer(AnalysisResult(
+        signal=Signal.HOLD, confidence=0.9, reason="x", risk_score=0.1,
+    ))
+    trader = AutoTrader(analyzer=analyzer, sample_size=2)
+
+    assert len(trader.watchlist) == 2 * len(CANDIDATE_POOLS)
 
 
 def test_run_all_continues_after_one_item_fails(monkeypatch):

@@ -98,8 +98,16 @@ class ClaudeAnalyzer(BaseAnalyzer):
 
         self.client = anthropic.Anthropic(api_key=resolved_key)
 
-    def _build_prompt(self, df: pd.DataFrame, symbol: str) -> str:
-        """최신 지표 값을 요약하여 Claude에게 보낼 프롬프트를 생성한다."""
+    def _build_prompt(
+        self, df: pd.DataFrame, symbol: str, market_context: Optional[str] = None
+    ) -> str:
+        """최신 지표 값을 요약하여 Claude에게 보낼 프롬프트를 생성한다.
+
+        Args:
+            df: 지표가 포함된 OHLCV DataFrame.
+            symbol: 분석 대상 심볼.
+            market_context: 시장별 맥락 설명 (생략 가능, market_profiles 참고).
+        """
         latest = df.iloc[-1]
         recent_closes = ", ".join(f"{v:.2f}" for v in df["close"].tail(5))
 
@@ -111,9 +119,12 @@ class ClaudeAnalyzer(BaseAnalyzer):
         if not indicator_lines:
             indicator_lines = "(지표 데이터 부족 - 최근 데이터 구간이 너무 짧음)"
 
+        context_line = f"\n시장 맥락: {market_context}\n" if market_context else ""
+
         return (
             f"당신은 신중한 퀀트 투자 분석가입니다. 아래 {symbol}의 최신 기술적 지표를 "
-            "바탕으로 투자 신호를 판단하세요.\n\n"
+            "바탕으로 투자 신호를 판단하세요.\n"
+            f"{context_line}\n"
             f"최근 종가 (오래된순): {recent_closes}\n"
             f"현재가: {latest['close']:.2f}\n\n"
             f"기술적 지표:\n{indicator_lines}\n\n"
@@ -148,13 +159,19 @@ class ClaudeAnalyzer(BaseAnalyzer):
         parsed = json.loads(match.group(0))
         return AnalysisResult.model_validate(parsed)
 
-    def analyze(self, df: pd.DataFrame, symbol: str) -> AnalysisResult:
+    def analyze(
+        self, df: pd.DataFrame, symbol: str, market_context: Optional[str] = None
+    ) -> AnalysisResult:
         """OHLCV+지표 DataFrame을 Claude로 분석하여 투자 신호를 반환한다.
 
         Args:
             df: src.engine.indicators.add_indicators()를 거친 DataFrame
                 (최소 1행 이상, close 컬럼 필수).
             symbol: 분석 대상 심볼 (예: "BTCUSDT").
+            market_context: 시장별 맥락 설명 (생략 가능). 한국/미국 주식,
+                암호화폐마다 거래시간/변동성/영향 요인이 다르므로
+                src.engine.market_profiles의 프로필을 넘기면 더 맥락에
+                맞는 판단을 받을 수 있다.
 
         Returns:
             AnalysisResult(signal, confidence, reason, risk_score).
@@ -168,7 +185,7 @@ class ClaudeAnalyzer(BaseAnalyzer):
         if "close" not in df.columns:
             raise AnalyzerError("DataFrame에 close 컬럼이 없습니다.")
 
-        prompt = self._build_prompt(df, symbol)
+        prompt = self._build_prompt(df, symbol, market_context=market_context)
 
         def _call_and_parse() -> AnalysisResult:
             response = self.client.messages.create(

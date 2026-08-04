@@ -32,6 +32,7 @@ load_environment()
 
 from src.fetcher.fetcher_registry import FetcherRegistry
 from src.engine.claude_analyzer import ClaudeAnalyzer
+from src.engine.market_profiles import get_profile
 from src.ui.symbol_catalog import CATEGORIES, CATEGORY_PLACEHOLDER, parse_symbol_list
 from src.ui.price_chart import build_price_chart
 from src.portfolio import session_portfolio as sp
@@ -183,7 +184,10 @@ with tab2:
         with st.spinner("🔄 Claude AI로 분석 중..."):
             try:
                 analyzer = ClaudeAnalyzer()
-                result = analyzer.analyze(entry["df"][-50:], symbol=ai_symbol)
+                market_context = get_profile(market_category).prompt_context
+                result = analyzer.analyze(
+                    entry["df"][-50:], symbol=ai_symbol, market_context=market_context,
+                )
 
                 signal_value = result.signal.value if hasattr(result.signal, "value") else str(result.signal)
 

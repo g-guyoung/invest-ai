@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import Enum
+from typing import Optional
 
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -55,12 +56,17 @@ class BaseAnalyzer(ABC):
     """모든 AI 분석기가 구현해야 하는 공통 인터페이스."""
 
     @abstractmethod
-    def analyze(self, df: pd.DataFrame, symbol: str) -> AnalysisResult:
+    def analyze(
+        self, df: pd.DataFrame, symbol: str, market_context: Optional[str] = None
+    ) -> AnalysisResult:
         """지표가 포함된 OHLCV DataFrame을 분석하여 투자 신호를 반환한다.
 
         Args:
             df: src.engine.indicators.add_indicators()를 거친 DataFrame.
             symbol: 분석 대상 심볼 (예: "BTCUSDT").
+            market_context: 시장별 맥락 설명(예: 한국장/미국장/암호화폐 특성).
+                생략하면 시장 맥락 없이 분석한다(하위 호환).
+                src.engine.market_profiles.MarketProfile.prompt_context 참고.
 
         Returns:
             AnalysisResult.
