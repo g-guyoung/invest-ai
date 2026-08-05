@@ -10,6 +10,8 @@ src/trading/auto_trader.py 에 대한 pytest 테스트.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -24,6 +26,7 @@ from src.trading.auto_trader import (
     WatchlistItem,
     build_daily_watchlist,
 )
+from src.trading.deployment_pacing import CAMPAIGN_START_DATE, FORCE_BUY_MAX_RISK_SCORE
 
 
 def _make_ohlcv_df(n: int = 60, last_close: float = 70000.0) -> pd.DataFrame:
@@ -327,3 +330,92 @@ def test_run_all_continues_after_one_item_fails(monkeypatch):
     assert decisions[0].error is not None
     assert decisions[1].error is None
     assert decisions[1].signal == Signal.HOLD
+
+
+# ── 1개월 소진 페이싱 (deployment_pacing 연동) ──────────────────
+# 마감 임박(잔여 4일) + 아직 0% 소진 상태를 만들어 강제 매수를 검증한다.
+_NEAR_DEADLINE = CAMPAIGN_START_DATE + timedelta(days=25)
+
+
+def test_run_once_forces_buy_on_hold_signal_when_far_behind_near_deadline(monkeypatch):
+    """마감이 임박했는데도 소진율이 0%면, HOLD 신호라도 강제로 매수해야 한다."""
+    _patch_ohlcv(monkeypatch, _make_ohlcv_df(last_close=70000.0))
+    analyzer = _FixedAnalyzer(AnalysisResult(
+        signal=Signal.HOLD, confidence=0.4, reason="애매한 관망", risk_score=0.3,
+    ))
+    trader = AutoTrader(analyzer=analyzer, watchlist=[ITEM], today=_NEAR_DEADLINE)
+
+    decision = trader.run_once({}, ITEM)
+
+    assert decision.executed is True
+    assert decision.forced is True
+    assert "강제매수" in decision.message
+
+
+def test_run_once_does_not_force_buy_when_deployment_already_on_track(monkeypatch):
+    """이미 충분히 소진했다면(70% 이상) 마감이 임박해도 강제하지 않는다."""
+    _patch_ohlcv(monkeypatch, _make_ohlcv_df(last_close=70000.0))
+    analyzer = _FixedAnalyzer(AnalysisResult(
+        signal=Signal.HOLD, confidence=0.4, reason="관망", risk_score=0.3,
+    ))
+    trader = AutoTrader(analyzer=analyzer, watchlist=[ITEM], today=_NEAR_DEADLINE)
+
+    state: dict = {}
+    from src.portfolio import session_portfolio as sp
+    sp.init_portfolio(state)
+    # 75% 소진된 상태를 미리 만들어둔다 (100만원 중 75만원 매수).
+    sp.buy(state, ITEM.category, "999999", "더미종목", 1000.0, 750_000.0)
+
+    decision = trader.run_once(state, ITEM)
+
+    assert decision.forced is False
+    assert decision.executed is False
+    assert "강제매수" not in decision.message
+
+
+def test_run_once_forced_buy_still_blocks_extreme_risk_score(monkeypatch):
+    """강제 매수 모드에서도 위험도가 너무 높으면(0.9 초과) 매수를 보류해야 한다."""
+    _patch_ohlcv(monkeypatch, _make_ohlcv_df(last_close=70000.0))
+    analyzer = _FixedAnalyzer(AnalysisResult(
+        signal=Signal.HOLD, confidence=0.4, reason="위험", risk_score=0.95,
+    ))
+    trader = AutoTrader(analyzer=analyzer, watchlist=[ITEM], today=_NEAR_DEADLINE)
+
+    decision = trader.run_once({}, ITEM)
+
+    assert decision.executed is False
+    assert "강제매수 보류" in decision.message
+    assert str(FORCE_BUY_MAX_RISK_SCORE) in decision.message
+
+
+def test_run_once_does_not_force_buy_on_sell_signal(monkeypatch):
+    """SELL 신호는 이미 보유 중이라는 뜻이므로 강제 매수 대상이 아니다(정상 매도 경로 유지)."""
+    _patch_ohlcv(monkeypatch, _make_ohlcv_df(last_close=80000.0))
+    analyzer = _FixedAnalyzer(AnalysisResult(
+        signal=Signal.SELL, confidence=0.4, reason="애매한 매도", risk_score=0.3,
+    ))
+    trader = AutoTrader(analyzer=analyzer, watchlist=[ITEM], today=_NEAR_DEADLINE)
+
+    decision = trader.run_once({}, ITEM)
+
+    # 보유 중이 아니므로 매도가 생략되어야 하고, 강제 매수로 둔갑해서는 안 된다.
+    assert decision.executed is False
+    assert decision.forced is False
+    assert "보유 중이 아니므로" in decision.message
+
+
+def test_pacing_lowers_effective_threshold_before_force_mode_kicks_in(monkeypatch):
+    """마감 전이라도 목표 소진 속도보다 뒤처지면 min_confidence가 낮아져 매수가 통과돼야 한다."""
+    _patch_ohlcv(monkeypatch, _make_ohlcv_df(last_close=70000.0))
+    # 기본 min_confidence(0.6)는 통과 못 하지만, 페이싱으로 낮아진 문턱은 통과할 신뢰도.
+    analyzer = _FixedAnalyzer(AnalysisResult(
+        signal=Signal.BUY, confidence=0.45, reason="약한 매수 신호", risk_score=0.2,
+    ))
+    mid_campaign = CAMPAIGN_START_DATE + timedelta(days=9)  # 10일째, 잔여 20일 (강제모드 아님)
+    trader = AutoTrader(analyzer=analyzer, watchlist=[ITEM], today=mid_campaign)
+
+    decision = trader.run_once({}, ITEM)
+
+    # 강제 매수는 아니지만(아직 force_mode 아님) 페이싱 덕분에 정상 매수로 체결돼야 한다.
+    assert decision.forced is False
+    assert decision.executed is True
