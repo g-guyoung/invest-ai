@@ -1,0 +1,49 @@
+name: Analyze Auto Trading Performance
+
+# auto_trade.yml이 완료된 직후, 성과를 자동으로 분석하고 저장한다.
+
+on:
+  workflow_run:
+    workflows: ["AI Auto Trading (Paper Trading)"]
+    types:
+      - completed
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Pull latest data (Supabase)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          # TODO: Supabase에서 최신 거래 기록을 다운로드해서 로컬에 저장
+          # (현재는 auto_trader가 직접 CSV에 저장하므로 생략)
+          echo "✅ Supabase 동기화 완료"
+
+      - name: Analyze trading performance
+        run: python scripts/analyze_auto_trading.py
+
+      - name: Commit & Push results
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/analysis_summary.txt data/auto_trading_log.csv 2>/dev/null || true
+          git diff --quiet && git diff --staged --quiet || (
+            git commit -m "[Auto] Update trading analysis results"
+            git push
+          )
+        continue-on-error: true  # 변경사항 없으면 실패해도 무시

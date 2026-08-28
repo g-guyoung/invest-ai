@@ -469,6 +469,7 @@ def main() -> None:
     load_environment()
 
     from src.engine.claude_analyzer import ClaudeAnalyzer
+    from src.trading.auto_trader_logger import log_auto_trade_result
 
     watchlist = build_daily_watchlist(sample_size=3)
     logger.info(
@@ -477,6 +478,9 @@ def main() -> None:
 
     trader = AutoTrader(analyzer=ClaudeAnalyzer(), watchlist=watchlist)
     decisions = trader.run_all()
+
+    # 📊 자동으로 CSV/JSON에 기록 (로그 저장)
+    log_auto_trade_result(decisions)
 
     executed = sum(1 for d in decisions if d.executed)
     forced = sum(1 for d in decisions if d.forced)
