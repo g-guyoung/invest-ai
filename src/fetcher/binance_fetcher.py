@@ -122,6 +122,12 @@ class BinanceFetcher(BaseFetcher):
             raise BinanceFetcherError(
                 f"Binance API 요청이 {self.max_retries}회 모두 실패했습니다: {exc}"
             ) from exc
+        except BinanceFetcherError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 예상 밖 오류도 호출자에겐 일관된 타입으로
+            # 세션/네트워크 계층에서 어떤 예외가 오든, 호출자는 BinanceFetcherError
+            # 하나만 처리하면 되도록 통일한다 (예외 타입 계약 유지).
+            raise BinanceFetcherError(f"Binance API 요청 중 예상치 못한 오류: {exc}") from exc
 
     def get_ohlcv(
         self,

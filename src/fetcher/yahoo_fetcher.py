@@ -60,14 +60,21 @@ class YahooFetcher(BaseFetcher):
         "SAMSUNG_005930": "005930.KS",
     }
 
+    #: yfinance 모듈 (지연 임포트). 클래스 속성으로 두어 테스트에서
+    #: @patch("...YahooFetcher.yf")로 목킹할 수 있게 한다.
+    yf = None
+
     def __init__(self) -> None:
-        try:
-            import yfinance
-            self.yf = yfinance
-        except ImportError as exc:
-            raise FetcherError(
-                "yfinance package not installed. Run: pip install yfinance"
-            ) from exc
+        # 이미 로드됐거나 테스트에서 목이 주입된 경우 임포트를 건너뛴다.
+        if type(self).yf is None:
+            try:
+                import yfinance
+
+                type(self).yf = yfinance
+            except ImportError as exc:
+                raise FetcherError(
+                    "yfinance package not installed. Run: pip install yfinance"
+                ) from exc
 
     def _normalize_interval(self, interval: str) -> str:
         return self.INTERVAL_MAPPING.get(interval.lower(), "1d")

@@ -266,6 +266,7 @@ class AutoTrader:
         today: Optional[date] = None,
         campaign_start_date: date = CAMPAIGN_START_DATE,
         campaign_duration_days: int = CAMPAIGN_DURATION_DAYS,
+        risk_guard: Optional["RiskGuard"] = None,
     ) -> None:
         """AutoTrader를 초기화한다.
 
@@ -293,6 +294,11 @@ class AutoTrader:
         self.today = today
         self.campaign_start_date = campaign_start_date
         self.campaign_duration_days = campaign_duration_days
+        # 리스크 가드: Kill Switch / 낙폭 한도 / 주문 크기 검증 (실전 대비 최종 방어선).
+        # 생략하면 기본 한도로 생성한다. 테스트에서는 mock/커스텀 주입 가능.
+        from src.execution.risk_guard import RiskGuard as _RiskGuard
+
+        self.risk_guard = risk_guard if risk_guard is not None else _RiskGuard()
 
     def _resolve_config(self, item: WatchlistItem) -> TradingConfig:
         """종목에 적용할 TradingConfig를 결정한다.
@@ -417,6 +423,24 @@ class AutoTrader:
                     return decision
                 if amount < cfg.min_trade_amount and not is_forced:
                     decision.message = f"매수 가능 금액 부족({amount:,.0f})"
+                    return decision
+
+                # ── RiskGuard 최종 검사 (Kill Switch / 낙폭 / 주문 크기) ──
+                # AI 판단과 독립적으로 동작하는 마지막 방어선. 실전 전환 시에도
+                # 동일 코드가 실돈을 보호한다.
+                holdings_cost = sum(
+                    float(h.get("qty", 0)) * float(h.get("avg_price", 0))
+                    for h in book["holdings"].values()
+                )
+                verdict = self.risk_guard.check_buy(
+                    amount=amount,
+                    available_cash=book["cash"],
+                    initial_balance=sp.INITIAL_BALANCE,
+                    current_total=book["cash"] + holdings_cost,
+                    allow_full_cash=is_forced,  # 강제매수(전액 소진 정책)는 비중 상한 면제
+                )
+                if not verdict.allowed:
+                    decision.message = f"🛡️ RiskGuard 차단: {verdict.reason}"
                     return decision
 
                 reason = result.reason

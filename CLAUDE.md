@@ -178,6 +178,30 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
     마감일 전액 소진 등 엣지 케이스 포함. 전체 스위트 134 passed(무관한 기존 Yahoo/Binance
     fetcher 목킹 이슈 9건은 이번 변경과 무관 — 별도 확인 필요 사항으로 기록).
 
+- **Phase 5 Part 5 (실전 투입 준비 인프라): 완료** (2026-08-29)
+  - ✅ **실행 계층(Execution Layer)** — `src/execution/` 신규:
+    - `base_broker.py` — 가상/실전 브로커 공통 인터페이스 (OrderRequest/OrderResult/BaseBroker)
+    - `paper_broker.py` — 기존 session_portfolio 로직을 브로커 인터페이스로 래핑 (DRY)
+    - `risk_guard.py` — **실전 대비 3중 방어선**: ① Kill Switch(`data/KILL_SWITCH` 파일 생성 시
+      모든 매수 즉시 차단, 코드 수정 불필요) ② 일일 손실 한도(3%) ③ 최대 낙폭 한도(15%)
+      + 주문 크기/횟수 검증. 강제매수(소진 캠페인)는 `allow_full_cash`로 비중 상한만 면제.
+    - `broker_factory.py` — 실전 전환 3중 잠금: 기본은 무조건 PaperBroker,
+      `LIVE_TRADING=true` + `LIVE_TRADING_CONFIRM=I_UNDERSTAND_THE_RISKS` 둘 다 있어야 하고,
+      실전 브로커 미구현 상태에선 명시적 에러로 중단 (조용한 폴백 금지).
+  - ✅ AutoTrader에 RiskGuard 통합 — 매수 직전 최종 검사 (AI 판단과 독립적).
+  - ✅ `scripts/go_live_report.py` — 실전 투입 GO/NO-GO 판정 리포트 (캠페인 완료 여부,
+    카테고리별 거래 수, 강제매수 비중 등 검증. 로컬 PC에서 실행).
+  - ✅ **기존 실패 테스트 9건 전부 수정** — YahooFetcher `yf`를 클래스 속성 지연 임포트로
+    변경(목킹 가능), BinanceFetcher 예상 밖 예외도 BinanceFetcherError로 래핑,
+    num_trades 타입 검사를 dtype 기반으로 수정. 날짜 의존 auto_trader 테스트 4건에
+    `today=_EARLY_CAMPAIGN` 고정 (캠페인 막바지에 실행해도 깨지지 않도록).
+  - ✅ 전체 테스트 스위트 **162 passed, 0 failed**.
+  - ⚠️ **실전 투입 전 남은 필수 단계 (사용자 액션)**:
+    1. 캠페인 종료(9/3) 후 `python scripts/go_live_report.py`로 성과 검증
+    2. 브로커 계좌 개설 + API 키 발급 (업비트: 암호화폐 / 한국투자증권 KIS: 주식 — 본인만 가능)
+    3. 해당 브로커 구현체(`src/execution/upbit_broker.py` 등) 개발 요청
+    4. 초소액(1~5%)으로 1~2주 실전 검증 후 단계적 확대
+
 ### 다음 할 일 (Phase 5 Part 4 마무리 — 완료, 1개월 강제 소진 운영 관찰 단계)
 
 사용자 목표: **Claude가 직접 한국주식/미국주식/암호화폐에 각 100만원(총 300만원) 가상 투자금으로

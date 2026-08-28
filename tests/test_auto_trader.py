@@ -28,6 +28,11 @@ from src.trading.auto_trader import (
 )
 from src.trading.deployment_pacing import CAMPAIGN_START_DATE, FORCE_BUY_MAX_RISK_SCORE
 
+# 날짜 의존 테스트 안정화: today를 고정하지 않으면 실제 실행 날짜가 캠페인 막바지
+# (D-5 이내)일 때 강제매수 모드가 켜져 일반 시나리오 테스트가 깨진다.
+# → 페이싱과 무관한 테스트는 캠페인 초반(2일째)으로 고정한다.
+_EARLY_CAMPAIGN = CAMPAIGN_START_DATE + timedelta(days=1)
+
 
 def _make_ohlcv_df(n: int = 60, last_close: float = 70000.0) -> pd.DataFrame:
     rng = np.arange(n, dtype=float)
@@ -127,7 +132,7 @@ def test_run_all_iterates_every_watchlist_item(monkeypatch):
         WatchlistItem("🇰🇷 한국 주식", "005930.KS", "005930", "삼성전자"),
         WatchlistItem("🇺🇸 미국 주식", "AAPL", "AAPL", "Apple"),
     ]
-    trader = AutoTrader(analyzer=analyzer, watchlist=watchlist)
+    trader = AutoTrader(analyzer=analyzer, watchlist=watchlist, today=_EARLY_CAMPAIGN)
 
     decisions = trader.run_all()
 
@@ -142,7 +147,9 @@ def test_run_once_holds_off_when_confidence_below_threshold(monkeypatch):
     analyzer = _FixedAnalyzer(AnalysisResult(
         signal=Signal.BUY, confidence=0.3, reason="확신 부족", risk_score=0.2,
     ))
-    trader = AutoTrader(analyzer=analyzer, config=TradingConfig(min_confidence=0.6))
+    trader = AutoTrader(
+        analyzer=analyzer, config=TradingConfig(min_confidence=0.6), today=_EARLY_CAMPAIGN
+    )
 
     decision = trader.run_once({}, ITEM)
 
@@ -155,7 +162,9 @@ def test_run_once_holds_off_buy_when_risk_score_too_high(monkeypatch):
     analyzer = _FixedAnalyzer(AnalysisResult(
         signal=Signal.BUY, confidence=0.9, reason="위험한 매수", risk_score=0.95,
     ))
-    trader = AutoTrader(analyzer=analyzer, config=TradingConfig(max_risk_score=0.7))
+    trader = AutoTrader(
+        analyzer=analyzer, config=TradingConfig(max_risk_score=0.7), today=_EARLY_CAMPAIGN
+    )
 
     decision = trader.run_once({}, ITEM)
 
@@ -242,7 +251,8 @@ def test_default_config_uses_stricter_crypto_profile(monkeypatch):
         signal=Signal.BUY, confidence=0.9, reason="x", risk_score=0.65,
     ))
     crypto_item = WatchlistItem("₿ 암호화폐", "BTC-USD", "BTC", "Bitcoin")
-    trader = AutoTrader(analyzer=analyzer)  # config=None -> 시장별 프로필 자동 적용
+    # config=None -> 시장별 프로필 자동 적용
+    trader = AutoTrader(analyzer=analyzer, today=_EARLY_CAMPAIGN)
 
     decision = trader.run_once({}, crypto_item)
 

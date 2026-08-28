@@ -186,9 +186,13 @@ class TestBinanceFetcherKlines:
         fetcher = BinanceFetcher(session=mock_session_instance)
         df = fetcher.get_klines(symbol="BTCUSDT")
 
-        assert isinstance(df["close"].iloc[0], float)
-        assert isinstance(df["volume"].iloc[0], float)
-        assert isinstance(df["num_trades"].iloc[0], int)
+        # numpy 스칼라(np.float64/np.int64)는 파이썬 int의 서브클래스가 아니므로
+        # isinstance 대신 dtype으로 검사한다 (np.float64는 float 서브클래스라 통과했었음).
+        import pandas.api.types as ptypes
+
+        assert ptypes.is_float_dtype(df["close"])
+        assert ptypes.is_float_dtype(df["volume"])
+        assert ptypes.is_integer_dtype(df["num_trades"])
 
 
 class TestBinanceFetcherErrors:
