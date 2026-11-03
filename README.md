@@ -1,61 +1,92 @@
-# INVEST AI
+💰 투자 AI 프로젝트 (invest-ai)
 
-한국 주식 · 미국 주식 · 암호화폐 시세를 수집하고 Claude AI가 분석해 **BUY / SELL / HOLD + 신뢰도 + 근거 + 위험도**를
-생성하는 투자 플랫폼. 현재는 매일 자동으로 **페이퍼 트레이딩**(가상 자금 매매)을 하며, 실전 브로커 연결을 위한
-실행 계층과 리스크 가드까지 갖춰져 있다.
+📌 프로젝트 개요
 
-> 최신 진행 상황은 [`PROGRESS.md`](PROGRESS.md) — 2026-11-03 기준 Phase 5 완료, 테스트 175개 통과.
+손실을 관리하면서 수익을 목표로 하는 AI 투자 분석 및 자동매매 플랫폼입니다.
 
-## 시스템 흐름
+핵심 아이디어:
 
-```
-Yahoo Finance / Binance ─▶ fetcher ─▶ indicators ─▶ ClaudeAnalyzer ─▶ AutoTrader
-                                                     (signal·conf·      │
-                                                      reason·risk)      ▼
-                                       DeploymentPacing ─▶ RiskGuard ─▶ Broker(Paper)
-                                                                         │
-                          Streamlit 대시보드 ◀──── Supabase (지갑·보유·거래내역) ◀┘
-                          GitHub Actions: 매일 09:30 KST 자동 실행 + 분석 요약
-```
+	•	Binance(암호화폐), Yahoo Finance(주식)에서 시장 데이터 수집
+	•	기술적 지표 계산 + Claude AI가 시장 분석
+	•	BUY / SELL / HOLD 신호 생성 (signal, confidence, reason, risk_score)
+	•	웹 대시보드에서 모니터링
+	•	최종 목표: 모의투자 → 실전 자동매매
 
-## 프로젝트 구조
+🔧 기술 스택
 
-```
-src/
- ├── fetcher/     # 데이터 수집 — Yahoo(주식·크립토), Binance, FetcherRegistry(시장 자동 라우팅)
- ├── engine/      # 기술적 지표, BaseAnalyzer / ClaudeAnalyzer, 시장별 분석 프로필
- ├── trading/     # AutoTrader(자동매매), 소진 페이싱, 실행 로그
- ├── execution/   # Broker 추상화(Paper/실전), RiskGuard(Kill Switch·일일손실·최대낙폭), BrokerFactory
- ├── portfolio/   # 가상 포트폴리오 + Repository Pattern (Session / Supabase)
- ├── database/    # Supabase 클라이언트
- ├── common/      # retry, env_loader(.env + Streamlit Secrets 통합)
- └── ui/          # Streamlit 앱 (streamlit_app.py), Plotly 통합 차트, 심볼 검색
-scripts/          # init_db.sql, analyze_auto_trading.py, go_live_report.py, 1회성 복구 SQL
-tests/            # pytest 175개 (외부 API 전부 mock)
-docs/             # ARCHITECTURE, DATABASE_SCHEMA, DEPLOYMENT_GUIDE, PHASE_6_DESIGN, reference/
-.github/workflows # auto_trade.yml(매일 자동매매+분석), tests.yml(CI)
-```
+	•	언어: Python 3.11+
+	•	대시보드: Streamlit (현재), Flask (계획)
+	•	시장 데이터: Binance API, Yahoo Finance(yfinance), Alpha Vantage(일부)
+	•	AI 분석: Claude API (Anthropic)
+	•	데이터 저장: CSV/Parquet (현재), PostgreSQL + SQLAlchemy (계획)
+	•	버전관리: Git + GitHub
 
-## 설치 & 실행
+📁 현재 프로젝트 구조
 
-```bash
-pip install -r requirements.txt
-cp .env.example .env          # ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_KEY 입력
+invest-ai/
+├─ src/
+│  ├─ fetcher/
+│  │  ├─ base_fetcher.py          # 수집기 추상 인터페이스
+│  │  ├─ binance_fetcher.py       # 암호화폐 데이터
+│  │  ├─ yahoo_fetcher.py         # 미국/한국/해외 주식, 지수
+│  │  ├─ alpha_vantage.py         # 미국 시장 확장 (통합 확인 필요)
+│  │  └─ data_source_registry.py  # 심볼 → 데이터 소스 자동 매핑
+│  ├─ engine/
+│  │  ├─ base_analyzer.py         # 분석기 추상 인터페이스
+│  │  ├─ claude_analyzer.py       # Claude 기반 신호 생성
+│  │  └─ indicators.py            # 기술적 지표 15개 이상
+│  └─ dashboard.py                # Streamlit 대시보드
+├─ tests/
+├─ data/
+├─ config/
+├─ README.md
+├─ requirements.txt
+├─ CLAUDE.md
+└─ .gitignore
 
-streamlit run src/ui/streamlit_app.py     # 대시보드
-python -m src.trading.auto_trader         # 자동매매 1회 실행
-python scripts/go_live_report.py          # 실전 투입 GO/NO-GO 판정
-pytest -q                                 # 테스트
-```
+📊 진행 상황 (2026-11-03 기준)
 
-Windows PowerShell에서는 프로젝트 경로에 공백이 있으므로 항상 따옴표로 감싼다: `cd "C:\Users\us\Desktop\INVEST AI - 1"`.
+완료
 
-## 안전장치
+	☑︎	아키텍처 설계, GitHub 저장소 생성
+	☑︎	데이터 수집: Binance / Yahoo Finance / 레지스트리
+	☑︎	기술적 지표 계산 (indicators.py)
+	☑︎	Claude 분석 엔진 (BUY/SELL/HOLD)
+	☑︎	Streamlit 대시보드
 
-- 실전 매매는 기본 **잠금** — `LIVE_TRADING=true`와 `LIVE_TRADING_CONFIRM=I_UNDERSTAND_THE_RISKS`가 모두 있어야 하고, 실전 브로커는 아직 미구현이라 명시적 에러로 중단된다.
-- `data/KILL_SWITCH` 파일을 만들면 모든 매수가 즉시 중단된다.
-- API 키는 `.env` / Streamlit Secrets / GitHub Secrets에만 둔다.
+알려진 이슈
 
-## 라이선스
+	☐︎	dashboard.py: ClaudeAnalyzer를 base_analyzer에서 import하는 버그
+	•	수정: from src.engine.base_analyzer import AnalyzerError, Signal
+	•	수정: from src.engine.claude_analyzer import ClaudeAnalyzer
+	☐︎	Alpha Vantage 수집기 통합 여부 확인
 
-MIT
+다음 단계
+
+	☐︎	대시보드 import 버그 수정
+	☐︎	백테스트
+	☐︎	모의투자(Paper Trading)
+	☐︎	PostgreSQL 연동
+	☐︎	스케줄 자동 실행 (cron)
+	☐︎	실전 비트코인 봇 (소액으로 시작)
+
+🖥️ 실행 환경 계획
+
+	1.	현재: 데스크탑 PC에서 실행 (무료, 가장 빠르게 검증 가능)
+	2.	이후: 클라우드 VPS로 이동 → 24시간 실행, 폰은 대시보드·알림 확인용
+	3.	코드는 동일하게 유지, 설정은 .env로만 분리
+
+🔐 보안 원칙
+
+	•	API 키는 코드에 직접 쓰지 않고 .env에서만 읽기
+	•	.env는 .gitignore로 GitHub에 올리지 않기
+	•	실전 매매 전에는 반드시 모의투자로 검증
+
+👨‍💻 개발자
+
+	•	이름: 춘식 (규영)
+	•	목표: 손실 관리형 수익화 자동매매 시스템 구축
+
+📝 라이선스
+
+MIT License
