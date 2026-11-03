@@ -13,3 +13,8 @@ data/*.csv
 *비밀번호*.txt
 *password*.txt
 *secret*.txt
+
+# 실전 봇 런타임 파일 (로컬 전용)
+data/live_bot_state.json
+data/live_bot_log.jsonl
+data/KILL_SWITCH
