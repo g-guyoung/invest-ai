@@ -1,0 +1,31 @@
+name: BTC Backtest (Upbit)
+
+# 업비트 KRW-BTC 실데이터로 전략 3종 + Buy&Hold를 비교한다 (수동 실행).
+# 결과는 실행 화면의 Summary 탭에 표로 나온다. API 키 불필요 (공개 시세 API).
+on:
+  workflow_dispatch:
+    inputs:
+      capital:
+        description: "초기 자본 (원)"
+        default: "50000"
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python scripts/backtest_btc.py --capital "${{ inputs.capital }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backtest-btc-results
+          path: data/backtest_btc_results.json
+          retention-days: 30
