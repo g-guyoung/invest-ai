@@ -13,3 +13,7 @@ data/*.csv
 *비밀번호*.txt
 *password*.txt
 *secret*.txt
+
+# 자동매매 실행 로그/분석 결과 (영구 기록은 Supabase)
+data/*.json
+data/analysis_summary.txt
