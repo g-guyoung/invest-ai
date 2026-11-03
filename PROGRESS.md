@@ -1,361 +1,92 @@
-# 📊 投资 AI 프로젝트 - 진행상황 (PROGRESS.md)
+# 📊 INVEST AI — 진행 상황 (PROGRESS.md)
 
-**작성일:** 2026년 7월 29일 (데스크탑에서 정리)
+**최종 업데이트:** 2026-11-03 (2개월 공백 후 전체 점검·정비)
+**현재 위치:** Phase 5 완료 → Phase 6(성과 검증 + AI 품질 개선) 진입 전
+
+> 세부 이력은 `CLAUDE.md` 6장, 최초 계획은 `PROJECT_ROADMAP.md`, 아키텍처는 `docs/ARCHITECTURE.md` 참고.
 
 ---
 
-## 🎯 현재 상태
+## 1. 한눈에 보기
 
 | 항목 | 상태 |
 |---|---|
-| **프로젝트 위상** | Phase 1 (기초 구축) |
-| **코드 작성** | 0% (아직 시작 안 함) |
-| **설계 완료** | 100% ✅ |
-| **문서화** | 80% ✅ |
-| **Git 동기화** | 완벽 ✅ (맥 ↔ 데스크탑) |
+| 코드 | Phase 1~5 완료 (수집 → 지표 → Claude 분석 → 페이퍼 트레이딩 → 리스크 가드) |
+| 테스트 | **175 passed / 0 failed** (2026-11-03) |
+| 배포 | Streamlit Cloud (main push 시 자동 재배포) |
+| 저장소 | Supabase (Seoul) — 지갑/보유/거래내역 영구 저장 |
+| 스케줄러 | GitHub Actions 매일 09:30 KST — **10/28 정지 → 11/03 복구** |
+| CI | push/PR마다 pytest 자동 실행 (11/03 신설) |
 
 ---
 
-## ✅ 데스크탑에서 완료한 작업 (2026.07.28 ~ 07.29)
+## 2. Phase별 완료 현황
 
-### 1. 저장소 구축
-- [x] GitHub 저장소 생성: `https://github.com/g-guyoung/invest-ai`
-- [x] 초기 클론 (맥 + 데스크탑)
-- [x] Git 인증 설정 (맥: Keychain, 데스크탑: 토큰)
-
-### 2. 프로젝트 구조 정의
-```
-invest-ai/
-├─ src/
-│  ├─ fetcher/binance.py
-│  ├─ engine/analyzer.py
-│  ├─ engine/trader.py
-│  └─ dashboard.py
-├─ tests/
-├─ data/
-├─ config/
-├─ README.md ✅
-├─ requirements.txt ✅
-├─ CLAUDE.md ✅
-├─ .gitignore ✅
-└─ LICENSE ✅
-```
-
-### 3. 핵심 파일 작성
-
-#### 📄 **README.md**
-- 프로젝트 개요 및 목표
-- 5가지 시스템 구조 (데이터 수집 → 분석 → 신호 → 대시보드 → 자동화)
-- 기술 스택 정의
-- 진행상황 체크리스트
-
-#### 📄 **requirements.txt**
-- Python 3.11+ 의존성 정의
-- 핵심 라이브러리:
-  - `python-binance==1.0.17` (Binance API)
-  - `anthropic==0.7.0` (Claude AI)
-  - `Flask==3.0.0` (웹 대시보드)
-  - `SQLAlchemy==2.0.0` (DB ORM)
-  - `pytest==7.4.0` (테스트)
-
-#### 📄 **CLAUDE.md** (가장 중요)
-- **AI CTO 역할 정의**: 코드 생성기 아님, 건축가
-- **개발 프로세스 10단계**:
-  1. 요구사항 정의
-  2. 구조 설계
-  3. 데이터 설계
-  4. 핵심 로직(MVP)
-  5. 리팩토링
-  6. 테스트 작성
-  7. 코드 리뷰
-  8. 문서화
-  9. 성능 최적화
-  10. 다음 단계 제안
-
-- **설계 원칙**: SOLID, DRY, KISS, YAGNI, Clean Architecture
-- **Python 규칙**: Type Hint, Dataclass, Pydantic, Logging, Async
-- **예외 처리**: Retry, Backoff, Timeout, Circuit Breaker
-- **보안**: API 키는 .env에서만
-- **Git 규칙**: `[PhaseN][PartN] description` 형식
-
-#### 📄 **.gitignore**
-- Python 바이트 컴파일 파일 무시
-- 가상환경 무시 (.venv, venv, env)
-- 환경 변수 파일 무시 (.env, .env.local)
-- 민감정보 무시 (.env, API 키 등)
-- IDE 설정 무시 (.vscode, .idea)
-- 테스트/캐시 무시 (.pytest_cache, .mypy_cache)
-
-#### 📄 **LICENSE**
-- MIT License (저작권: g-guyoung, 2026)
-
-### 4. Git 동기화 규칙 추가 (맥에서 추가 후 데스크탑에서 pull 완료)
-```bash
-# 맥에서 추가:
-git add .
-git commit -m "[Setup] Git 동기화 규칙 추가"
-git push origin main
-
-# 데스크탑에서 확인:
-git pull origin main
-# → "Already up to date" ✅
-type CLAUDE.md  # 완전히 반영됨 확인
-```
-
----
-
-## 🔄 Git 동기화 상태
-
-### 맥과 데스크탑 연동 확인
-
-| 장치 | 저장소 | 상태 |
+| Phase | 내용 | 상태 |
 |---|---|---|
-| **Mac** | `~/...invest-ai` | Clone 완료 ✅ |
-| **Desktop** | 현재 디렉토리 | Clone 완료 ✅ |
-| **GitHub** | https://github.com/g-guyoung/invest-ai | 모든 파일 동기화 ✅ |
-
-### Commit 히스토리
-```
-Latest: [Setup] Git 동기화 규칙 추가 (맥에서)
-Previous: [Setup] 초기 프로젝트 구조 및 파일 (데스크탑에서)
-```
-
----
-
-## 📋 AI CTO 역할 정의
-
-### 11가지 역할
-1. AI CTO
-2. Senior Python Architect
-3. Senior Quant Developer
-4. Machine Learning Engineer
-5. AI Research Engineer
-6. Backend Engineer
-7. Data Engineer
-8. DevOps Engineer
-9. Security Engineer
-10. QA Engineer
-11. Code Reviewer
-12. Technical Writer
-
-**핵심 철학:**
-- "동작하는 코드" 아님
-- **"운영 가능한 코드"** 우선
-- Production Ready 기준
+| 1 | 스캐폴딩, 설정, Git 동기화 | ✅ |
+| 2 | Binance OHLCV 수집기 | ✅ |
+| 3 | 기술적 지표 15+ / Claude 분석 엔진 (signal·confidence·reason·risk_score) | ✅ |
+| 4 | Streamlit 대시보드 MVP | ✅ (Phase 5에서 `src/ui/`로 대체) |
+| 5-1 | 멀티마켓 (한국·미국 주식 + 암호화폐) | ✅ |
+| 5-2 | Streamlit Cloud 배포, 자체 Plotly 차트, Supabase 연동 | ✅ |
+| 5-3 | 포트폴리오 영구 저장(Repository Pattern) + AI 자동매매 엔진 + 시장별 프로필 | ✅ |
+| 5-4 | 1개월 강제 소진 페이싱 캠페인 + 실행 로깅 | ✅ (캠페인 종료) |
+| 5-5 | 실행 계층(Broker 추상화) + RiskGuard 3중 방어 + GO/NO-GO 리포트 | ✅ |
+| **5-Fix** | **2026-11-03 운영 장애 복구** (아래 4장) | ✅ |
 
 ---
 
-## 🏗️ 아키텍처 설계 (완료)
+## 3. 페이퍼 트레이딩 캠페인 결과 (Actions 로그 기준, 2026-08-05 ~ 10-28)
 
-### Phase 별 계획
+85일 실행 · 765건 분석. Supabase 원장은 로컬에서 `python scripts/go_live_report.py`로 교차 확인 필요.
 
-#### **Phase 1 (현재): 기초 구축**
-- [x] 설계 완료
-- [ ] Part 1: Binance 데이터 수집기
-- [ ] Part 2: Claude 분석 엔진
-- [ ] Part 3: 신호 생성 로직
+| 카테고리 | 매수 (강제) | 매도 | 9/3 소진율 | 최종 소진율 | 비고 |
+|---|---|---|---|---|---|
+| 🇰🇷 한국 주식 | 10 (6) | 3 | 73% | 91% | 정상 |
+| 🇺🇸 미국 주식 | 8 (3) | 4 | 80% | 80% | **9/6부터 매수 전면 차단** (SOFI 사고) |
+| ₿ 암호화폐 | 12 (7) | 4 | 72% | 100% | 정상 |
 
-#### **Phase 2: 모듈별 개발**
-- 고급 분석 기능
-- 백테스트 엔진
-
-#### **Phase 3: 프로토타입 완성**
-- 웹 대시보드 (Flask)
-- 배포 준비
-
-#### **Phase 4-10: 확장 및 운영**
-- Paper Trading
-- 실시간 모니터링
-- Multi AI (Claude, OpenAI, Gemini, Local LLM)
-- Cloud Deployment
-- Production 운영
+**관찰 (Phase 6 설계 입력값):**
+1. **강제매수 비중 53%** (30건 중 16건) — 실제 AI 판단보다 페이싱 규칙이 더 많이 샀다.
+   GO/NO-GO 판정 시 "AI 성과"와 "규칙 성과"를 분리해서 봐야 한다.
+2. **신뢰도 0.55 쏠림** — 765건 중 542건(71%)이 정확히 0.55, 신호는 HOLD 85%.
+   AI가 판단을 회피하고 기본값을 내는 상태 → 프롬프트/캘리브레이션 개선이 최우선 과제.
+3. 30일 마감(9/3)까지 세 카테고리 모두 목표(100%)에 못 미침(72~80%) — 강제 모드 임계값(D-5, 70%)이 늦게 발동.
 
 ---
 
-## 🚀 다음 단계 (즉시 시작)
+## 4. 2026-11-03 정비 내역
 
-### Phase 1 - Part 1: Binance 데이터 수집기
-
-**목표**: Binance API에서 실시간 가격 데이터 수집 및 CSV 저장
-
-#### ① 요구사항 분석
-- 지원할 심볼: BTC-USDT, ETH-USDT, SOL-USDT 등
-- 지원할 시간틀: 1m, 5m, 15m, 1h, 4h, 1d
-- 데이터 저장: CSV/Parquet
-- 결측치 처리: 자동 보간
-- Validation: 시간 순서, null 체크
-
-#### ② 파일 구조
-```
-src/
-├─ fetcher/
-│  ├─ __init__.py
-│  ├─ binance.py        ← 작성 예정
-│  ├─ base.py           ← BaseExchange 추상 클래스
-│  └─ types.py          ← OHLCV Dataclass
-├─ config/
-│  └─ settings.py       ← 환경 설정
-└─ core/
-   └─ utils.py          ← 유틸리티 함수
-```
-
-#### ③ 핵심 기능
-- `BinanceClient` 클래스
-  - `get_klines()`: OHLCV 데이터 조회
-  - `get_latest()`: 최신 데이터만
-  - `save_csv()`: CSV 저장
-  - Retry/Timeout 처리
-
-#### ④ 데이터 구조
-```python
-@dataclass
-class OHLCV:
-    timestamp: datetime
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-    quote_asset_volume: float
-    trades: int
-    symbol: str = "BTC-USDT"
-```
-
-#### ⑤ 테스트 전략
-- Unit Test: API 응답 Mock
-- Integration Test: 실제 Binance API 호출 (선택적)
-- Edge Case: 결측치, 네트워크 오류
+| # | 문제 | 원인 | 조치 |
+|---|---|---|---|
+| 1 | 자동매매가 10/28 이후 멈춤 | GitHub는 60일간 커밋이 없으면 스케줄 워크플로를 자동 비활성화 | 재활성화 + 매 실행마다 keepalive |
+| 2 | 성과 분석 워크플로가 매번 "로그 없음" | 별도 러너라 매매 job의 로그 파일에 접근 불가 (8/29 도입 이후 한 번도 동작 안 함) | 매매 job 안으로 통합, 결과를 Actions Summary 탭에 출력 |
+| 3 | 분석 스크립트 크래시 | 없는 `risk_score` 컬럼 참조, `lines.append()` 인자 누락, 빈 신뢰도 파싱 | 수정 + 회귀 테스트 4건 |
+| 4 | **SOFI NaN 매도로 미국 주식 현금 ~23% 유실** | Yahoo 마지막 봉 종가 NaN → `price <= 0` 검사가 NaN을 못 거름 | fetcher·AutoTrader·portfolio 3중 방어 + 테스트 9건, 데이터 복구 SQL |
+| 5 | 로그에 `Signal.SELL` 표기 | str+Enum f-string 포맷 | `.value` 사용 |
+| 6 | Actions Node 20 지원 종료 경고 | checkout@v4 / setup-python@v5 | v5 / v6 |
+| 7 | 루트 디렉터리 산만 | 과제 파일·설계 메모·죽은 코드 혼재 | `docs/`, `docs/reference/`로 이동, `tradingview_widget.py` 삭제, 실행 로그 추적 해제 |
 
 ---
 
-## 📝 커밋 규칙
+## 5. 지금 사용자가 해야 할 일 (Claude가 대신 못 하는 것)
 
-### 형식
-```
-[PhaseN][PartN] 기능 설명
-```
-
-### 예시
-```
-[Phase1][Part1] Binance 데이터 수집기 초기 구현
-[Phase1][Part1] get_klines() 함수 추가
-[Phase1][Part1] CSV 저장 기능 완성
-[Phase1][Part1] 단위 테스트 추가
-```
-
-### 날짜별 커밋 계획
-- 2026-07-30: Part 1 설계 완료 + 핵심 로직
-- 2026-07-31: Part 1 테스트 + 리팩토링
-- 2026-08-01: Part 2 시작
+1. **Supabase 데이터 복구** — `scripts/repair_2026-09-04_sofi_nan.sql`을 SQL Editor에서 순서대로 실행
+   (SOFI 2026-09-04 종가 1개만 입력하면 됨). 안 하면 미국 주식 매수 차단이 계속된다.
+2. **로컬 PC에서 `git pull`** — 이번 정비 커밋 4개 반영.
+3. **GO/NO-GO 리포트 실행** — 복구 후 `python scripts/go_live_report.py` (Supabase 원장 기준 최종 성과).
+4. Anthropic API 크레딧 잔액 확인 (매일 9건 분석이 계속 소모 중).
 
 ---
 
-## 🛠️ 기술 스택 (최종 확정)
+## 6. 다음 단계 제안 (Phase 6)
 
-### Backend
-- Python 3.11+
-- Flask (웹 프레임워크)
-- SQLAlchemy (ORM)
-- Pydantic (데이터 검증)
-
-### Data
-- Pandas (데이터 분석)
-- NumPy (수치 계산)
-- Binance API (시장 데이터)
-
-### AI
-- Anthropic Claude API (분석)
-- 향후: OpenAI, Google Gemini, Local LLM
-
-### Database
-- PostgreSQL (운영)
-- SQLite (개발/테스트)
-
-### DevOps
-- Git + GitHub
-- Docker (배포)
-- GitHub Actions (CI/CD)
-
-### Testing
-- Pytest (단위/통합 테스트)
-- Mock (API 테스트)
-
----
-
-## 📌 중요 노트
-
-### 보안
-1. **API 키는 절대 코드에 직접 입력하지 말 것**
-   ```python
-   # ❌ 나쁜 예
-   API_KEY = "abc123..."
-   
-   # ✅ 좋은 예
-   from dotenv import load_dotenv
-   import os
-   load_dotenv()
-   API_KEY = os.getenv("BINANCE_API_KEY")
-   ```
-
-2. **.env 파일은 .gitignore에 포함**
-   - GitHub에 올라가지 않음
-   - 로컬 개발용만
-
-### 코드 품질
-1. 모든 함수에 Docstring 작성
-2. Type Hint 필수
-3. PEP8 준수 (Black)
-4. Pytest 커버리지 80% 이상
-
-### 커밋 빈도
-- **매일**: 1~2개 커밋 (기능 단위)
-- **주 1~2회**: 큰 기능 정리
-
----
-
-## 📞 연락처 & 정보
-
-- **개발자**: 춘식 (규영)
-- **GitHub**: https://github.com/g-guyoung
-- **이메일**: jaicobib@gmail.com (Notion)
-- **기간**: 2026.07 ~ 2026.09
-- **개발 환경**: MacBook Air M1
-- **작업 시간**: 주말 개발 (토 14:30~18:00, 일 10:00~18:00)
-
----
-
-## 🎓 학습 & 참고
-
-### 이전 진행상황
-1. **Notion 프로젝트 페이지**: 설계 문서 저장
-2. **Notion 일일 추적**: 진행상황 추적 (date, phase, goal, progress, ...)
-3. **커스텀 Mentor Skill**: Claude와 1:1 코칭 세션용
-4. **프로젝트 설명 템플릿**: 9가지 상황별 소개말
-
----
-
-## ✨ 최종 체크리스트
-
-### 설정 완료 ✅
-- [x] GitHub 저장소
-- [x] 프로젝트 구조
-- [x] 개발 규칙 (CLAUDE.md)
-- [x] 의존성 정의 (requirements.txt)
-- [x] Git 동기화 (맥 ↔ 데스크탑)
-- [x] 문서화
-
-### 준비 완료 ✅
-- [x] AI CTO 역할 정의
-- [x] 10단계 개발 프로세스
-- [x] 아키텍처 설계
-- [x] Phase 1 상세 계획
-
-### 시작 준비됨 ✅
-- [x] Part 1: Binance 데이터 수집기 설계 완료
-- [ ] Part 1: 코드 작성 시작 (다음 단계)
-
----
-
-**마지막 업데이트**: 2026년 7월 29일 23:45 (데스크탑)
-
-**다음 단계**: [Phase1][Part1] Binance Fetcher 코드 작성 시작 🚀
+| 우선순위 | 작업 | 이유 |
+|---|---|---|
+| ★★★ | AI 신뢰도 캘리브레이션 (프롬프트 개선 + 0.55 쏠림 탐지 테스트) | 지금은 AI가 사실상 판단을 안 하고 있음 |
+| ★★★ | 낙폭 계산을 원가 → **평가금액 기준**으로 변경 | 원가 기준이라 손실이 한 번 생기면 시장이 회복해도 차단이 영원히 풀리지 않음 |
+| ★★ | 백테스트 엔진 (`src/backtest/`) — AI 신호 vs 규칙 신호 vs Buy&Hold 비교 | 강제매수 53% 상태에선 AI 성과를 판별할 수 없음 |
+| ★★ | 캠페인 종료 후 운용 정책 결정 (계속 운용 / 리셋 후 2차 캠페인 / 중단) | 소진 100% 이후엔 매도 신호 외에 할 일이 없어 API 비용만 발생 |
+| ★ | 모니터링 대시보드 탭 (`docs/PHASE_6_DESIGN.md` Part 1) | 지금은 Actions 로그를 직접 열어야 상태를 알 수 있음 |
+| ★ | 실전 브로커(업비트/KIS) — GO 판정 이후 | 계좌·API 키 발급은 본인만 가능 |
