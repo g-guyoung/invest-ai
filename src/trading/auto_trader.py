@@ -68,6 +68,7 @@ GitHub Actions로 매일 자동 실행한다 (.github/workflows/auto_trade.yml �
 from __future__ import annotations
 
 import logging
+import math
 import random
 import sys
 from dataclasses import dataclass
@@ -363,6 +364,9 @@ class AutoTrader:
             decision.confidence = result.confidence
 
             price = float(df["close"].iloc[-1])
+            if not math.isfinite(price) or price <= 0:
+                decision.error = f"유효하지 않은 현재가({price}) — 이번 실행에서는 매매하지 않음"
+                return decision
             sp.init_portfolio(state)
             book = state["portfolio"][item.category]
 
@@ -479,9 +483,11 @@ class AutoTrader:
         for item in self.watchlist:
             decision = self.run_once(state, item)
             decisions.append(decision)
+            # str+Enum은 f-string에서 "Signal.SELL"로 찍히므로 .value로 명시 변환한다.
+            signal_text = getattr(decision.signal, "value", decision.signal)
             logger.info(
                 f"[{item.category}] {item.display_symbol}: "
-                f"{decision.signal} (conf={decision.confidence}) -> "
+                f"{signal_text} (conf={decision.confidence}) -> "
                 f"{decision.message or decision.error}"
             )
         return decisions

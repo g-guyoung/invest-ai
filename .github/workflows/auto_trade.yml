@@ -1,21 +1,26 @@
 name: AI Auto Trading (Paper Trading)
 
-# Phase 5 Part 3 — Streamlit Cloud는 상시 백그라운드 job을 지원하지 않으므로,
+# Phase 5 — Streamlit Cloud는 상시 백그라운드 job을 지원하지 않으므로,
 # GitHub Actions cron으로 매일 자동매매 엔진(src/trading/auto_trader.py)을 실행한다.
 #
-# 사전 준비 (Claude가 대신 할 수 없는 사용자 액션):
-#   GitHub 저장소 Settings → Secrets and variables → Actions 에 아래 값을 등록해야 한다.
-#   - ANTHROPIC_API_KEY
-#   - SUPABASE_URL
-#   - SUPABASE_KEY
-#   (등록 전까지는 이 워크플로가 실행돼도 Supabase 연결 실패로 세션 저장소로
-#    폴백하며, 실행 자체는 에러 없이 끝나지만 결과가 영구 저장되지 않는다.)
+# 필요한 저장소 Secrets: ANTHROPIC_API_KEY / SUPABASE_URL / SUPABASE_KEY
+#
+# 2026-11-03 정비:
+#   - 성과 분석을 같은 job 안으로 통합 (기존 analyze_trading.yml은 별도 러너라
+#     로그 파일을 찾지 못해 매번 "로그 없음"으로 끝나던 구조적 버그가 있었음)
+#   - 분석 결과는 Actions 실행 화면의 Summary 탭에 표시 (영구 기록은 Supabase)
+#   - 60일 무활동 시 GitHub가 스케줄 워크플로를 자동 비활성화하는 문제 방지용 keepalive
+#   - Node 20 지원 종료 대응 (checkout v5 / setup-python v6)
 
 on:
   schedule:
-    # 매일 00:30 UTC = 한국시간 09:30 (평일/주말 구분 없이 실행 — 암호화폐는 24/7)
+    # 매일 00:30 UTC = 한국시간 09:30 (암호화폐는 24/7이므로 주말 포함)
     - cron: "30 0 * * *"
-  workflow_dispatch: {}  # 수동 실행 버튼 (테스트용)
+  workflow_dispatch: {}  # 수동 실행 버튼
+
+permissions:
+  contents: read
+  actions: write  # keepalive(워크플로 재활성화)용
 
 jobs:
   auto-trade:
@@ -24,12 +29,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -40,3 +46,23 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python -m src.trading.auto_trader
+
+      - name: Analyze this run (→ Summary 탭)
+        if: always()
+        run: |
+          python scripts/analyze_auto_trading.py
+          if [ -f data/analysis_summary.txt ]; then
+            {
+              echo '## 🤖 자동매매 실행 결과'
+              echo '```'
+              cat data/analysis_summary.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keepalive (60일 무활동 자동 비활성화 방지)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/auto_trade.yml/enable"
+        continue-on-error: true

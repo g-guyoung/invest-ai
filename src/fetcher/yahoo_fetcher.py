@@ -177,6 +177,16 @@ class YahooFetcher(BaseFetcher):
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
 
+            # Yahoo는 장중/휴장일에 마지막 봉의 종가를 NaN으로 주는 경우가 있다.
+            # 종가가 없는 봉은 지표 계산과 체결가 모두를 오염시키므로 버린다.
+            # (2026-09-04 SOFI가 NaN 가격으로 매도되어 현금이 유실된 버그의 원인)
+            before = len(df)
+            df = df.dropna(subset=["close"])
+            if len(df) < before:
+                logger.warning(f"{symbol}: dropped {before - len(df)} candle(s) with missing close")
+            if df.empty:
+                raise FetcherError(f"No valid close prices for {symbol} on Yahoo Finance.")
+
             df["open_time"] = pd.to_datetime(df["open_time"])
             df["symbol"] = symbol.upper()
 

@@ -18,3 +18,7 @@ data/*.csv
 data/live_bot_state.json
 data/live_bot_log.jsonl
 data/KILL_SWITCH
+
+# 자동매매 실행 로그/분석 결과 (영구 기록은 Supabase)
+data/*.json
+data/analysis_summary.txt

@@ -38,14 +38,33 @@ def load_log() -> pd.DataFrame:
     return df
 
 
+def _confidence_series(df: pd.DataFrame) -> pd.Series:
+    """confidence 컬럼을 0~1 실수로 변환한다.
+
+    로거는 "72.00%" 같은 문자열로 기록하지만, 빈 값만 있으면 pandas가 float로
+    읽어 `.str` 접근이 실패하므로 타입에 상관없이 안전하게 변환한다.
+    """
+    raw = df["confidence"].astype(str).str.rstrip("%")
+    values = pd.to_numeric(raw, errors="coerce")
+    # 퍼센트 문자열(72.0)과 소수(0.72)가 섞여 있어도 0~1 스케일로 맞춘다.
+    return values.where(values <= 1, values / 100)
+
+
+def _avg_risk(df: pd.DataFrame) -> float | None:
+    """risk_score 컬럼이 있을 때만 평균 위험도를 계산한다 (현재 로거에는 없음)."""
+    if "risk_score" not in df.columns:
+        return None
+    return pd.to_numeric(df["risk_score"], errors="coerce").mean()
+
+
 def analyze_overall(df: pd.DataFrame) -> dict:
     """전체 통계."""
     return {
         "total_records": len(df),
         "total_executed": (df["executed"] == "Yes").sum(),
         "total_forced": (df["forced"] == "Yes").sum(),
-        "avg_confidence": df["confidence"].str.rstrip("%").astype(float).mean() / 100,
-        "avg_risk": df["risk_score"].astype(float).mean(),
+        "avg_confidence": _confidence_series(df).mean(),
+        "avg_risk": _avg_risk(df),
         "execution_rate": (df["executed"] == "Yes").sum() / len(df),
         "forced_rate": (df["forced"] == "Yes").sum() / len(df),
     }
@@ -60,8 +79,8 @@ def analyze_by_category(df: pd.DataFrame) -> dict:
             "count": len(cat_df),
             "executed": (cat_df["executed"] == "Yes").sum(),
             "execution_rate": (cat_df["executed"] == "Yes").sum() / len(cat_df),
-            "avg_confidence": cat_df["confidence"].str.rstrip("%").astype(float).mean() / 100,
-            "avg_risk": cat_df["risk_score"].astype(float).mean(),
+            "avg_confidence": _confidence_series(cat_df).mean(),
+            "avg_risk": _avg_risk(cat_df),
         }
     return result
 
@@ -77,7 +96,7 @@ def analyze_by_signal(df: pd.DataFrame) -> dict:
             "count": len(sig_df),
             "executed": (sig_df["executed"] == "Yes").sum(),
             "execution_rate": (sig_df["executed"] == "Yes").sum() / len(sig_df),
-            "avg_confidence": sig_df["confidence"].str.rstrip("%").astype(float).mean() / 100,
+            "avg_confidence": _confidence_series(sig_df).mean(),
         }
     return result
 
@@ -95,7 +114,7 @@ def analyze_by_date(df: pd.DataFrame) -> dict:
             "executed": (date_df["executed"] == "Yes").sum(),
             "forced": (date_df["forced"] == "Yes").sum(),
             "avg_confidence": (
-                date_df["confidence"].str.rstrip("%").astype(float).mean() / 100
+                _confidence_series(date_df).mean()
             ),
         }
 
@@ -118,7 +137,9 @@ def print_report(overall: dict, by_category: dict, by_signal: dict, by_date: dic
     lines.append(f"  체결 건수: {overall['total_executed']}개 ({overall['execution_rate']*100:.1f}%)")
     lines.append(f"  강제매수: {overall['total_forced']}개 ({overall['forced_rate']*100:.1f}%)")
     lines.append(f"  평균 신뢰도: {overall['avg_confidence']:.1%}")
-    lines.append(f"  평균 위험도: {overall['avg_risk']:.2f}\n")
+    if overall["avg_risk"] is not None:
+        lines.append(f"  평균 위험도: {overall['avg_risk']:.2f}")
+    lines.append("")
 
     # 2. 카테고리별
     lines.append("2️⃣ 카테고리별 분석")
@@ -126,8 +147,9 @@ def print_report(overall: dict, by_category: dict, by_signal: dict, by_date: dic
     for cat, stats in by_category.items():
         lines.append(f"  {cat}")
         lines.append(f"    - 분석: {stats['count']}개, 체결: {stats['executed']}개 ({stats['execution_rate']*100:.1f}%)")
-        lines.append(f"    - 신뢰도: {stats['avg_confidence']:.1%}, 위험도: {stats['avg_risk']:.2f}")
-    lines.append()
+        risk = f", 위험도: {stats['avg_risk']:.2f}" if stats["avg_risk"] is not None else ""
+        lines.append(f"    - 신뢰도: {stats['avg_confidence']:.1%}{risk}")
+    lines.append("")
 
     # 3. 신호별
     if by_signal:
@@ -135,7 +157,7 @@ def print_report(overall: dict, by_category: dict, by_signal: dict, by_date: dic
         lines.append("-" * 70)
         for sig, stats in by_signal.items():
             lines.append(f"  {sig}: {stats['count']}개, 체결 {stats['executed']}개 ({stats['execution_rate']*100:.1f}%)")
-        lines.append()
+        lines.append("")
 
     # 4. 최근 7일
     if by_date:
@@ -148,7 +170,7 @@ def print_report(overall: dict, by_category: dict, by_signal: dict, by_date: dic
                 f"강제 {stats['forced']}개, "
                 f"신뢰도 {stats['avg_confidence']:.1%}"
             )
-        lines.append()
+        lines.append("")
 
     lines.append("=" * 70)
 

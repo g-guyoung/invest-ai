@@ -15,8 +15,8 @@
 
 ## 1. 프로젝트 목표
 
-Binance 데이터를 수집하고 AI(Claude API)가 분석하여 BUY/SELL/HOLD + Confidence Score를 생성하는
-투자 신호 플랫폼. 이후 자동매매까지 확장 가능한 구조로 설계한다.
+한국 주식·미국 주식·암호화폐 데이터를 수집하고 AI(Claude API)가 분석하여 BUY/SELL/HOLD + Confidence Score를
+생성하는 투자 플랫폼. 현재는 매일 페이퍼 트레이딩을 자동 실행하며, 실전 자동매매까지 확장 가능한 구조로 설계한다.
 
 ## 2. 개발 원칙 (모든 기능 공통)
 
@@ -34,10 +34,12 @@ Binance 데이터를 수집하고 AI(Claude API)가 분석하여 BUY/SELL/HOLD +
 ```
 src/
  ├── fetcher/       # 데이터 수집기 (binance_fetcher.py, yahoo_fetcher.py, fetcher_registry.py, base_fetcher.py)
- ├── engine/        # AI 분석 엔진 (indicators.py, base_analyzer.py, claude_analyzer.py)
+ ├── engine/        # AI 분석 엔진 (indicators.py, base_analyzer.py, claude_analyzer.py, market_profiles.py)
  ├── common/        # 공통 유틸 (retry.py, env_loader.py — .env/Streamlit secrets 통합 로더)
- ├── database/      # Supabase 연동 (supabase_client.py) — 자동매매 엔진 단계에서 실사용 예정
- ├── portfolio/     # 가상 포트폴리오 (session_portfolio.py — 현재는 session_state 기반 MVP)
+ ├── trading/       # auto_trader.py, deployment_pacing.py, auto_trader_logger.py
+ ├── execution/     # base_broker / paper_broker / risk_guard / broker_factory (실전 전환 3중 잠금)
+ ├── database/      # Supabase 연동 (supabase_client.py) — 실사용 중
+ ├── portfolio/     # 가상 포트폴리오 + Repository Pattern (session / supabase)
  └── ui/            # Streamlit 대시보드 (실 사용 화면)
       ├── streamlit_app.py   # 메인 앱 — Streamlit Cloud 배포 대상
       ├── symbol_catalog.py  # 자유 검색 심볼 정규화 (고정 목록 없음)
@@ -45,13 +47,16 @@ src/
 tests/
 config/
 data/
-docs/              # ARCHITECTURE.md, DATABASE_SCHEMA.md, DEPLOYMENT_GUIDE.md
-scripts/           # init_db.sql (Supabase 초기화 스크립트)
+docs/              # ARCHITECTURE.md, DATABASE_SCHEMA.md, DEPLOYMENT_GUIDE.md, PHASE_6_DESIGN.md,
+                   # IMPROVEMENT_CHECKLIST.md, reference/(학교 과제 기획서·프로토타입)
+scripts/           # init_db.sql, analyze_auto_trading.py, go_live_report.py, repair_*.sql(1회성 복구)
+.github/workflows/ # auto_trade.yml(매일 자동매매+분석 요약+keepalive), tests.yml(CI)
 .streamlit/        # config.toml, secrets.toml(로컬 전용, .gitignore 처리됨)
 README.md
+PROGRESS.md        # 최신 현황 스냅샷 (가장 먼저 볼 문서)
 requirements.txt
 CLAUDE.md
-PROJECT_ROADMAP.md
+PROJECT_ROADMAP.md # 최초 계획 기록
 ```
 
 새 파일도 이 구조를 유지한다.
@@ -78,7 +83,9 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
 예: `INVEST AI (Binance 수집기 구현)`, `INVEST AI (AI 분석 엔진 설계)`.
 (대화 제목을 직접 바꾸는 기능이 없는 환경이라면, 응답 맨 앞에 추천 제목을 `제목: INVEST AI (주제)` 형식으로 먼저 안내한다.)
 
-## 6. 현재 진행 상황 (2026-08-04 기준)
+## 6. 현재 진행 상황 (2026-11-03 기준)
+
+> 요약은 `PROGRESS.md`가 최신본이다. 아래는 Part별 상세 이력.
 
 - Phase 1 (스캐폴딩): 완료
 - Phase 2 Part 1 (Binance OHLCV 수집기): 완료
@@ -111,8 +118,7 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
   - ✅ `src/portfolio/session_portfolio.py` + Streamlit "💰 포트폴리오" 탭 — 가상 매수/매도 MVP.
     시장별(한국 주식 ₩1,000,000 / 미국 주식 $1,000,000 / 암호화폐 $1,000,000) 가상자금을 배정해
     직접 매수/매도 버튼으로 체험 가능.
-  - ⚠️ `src/ui/tradingview_widget.py`는 더 이상 코드에서 사용하지 않지만, 로컬 파일 잠금 문제로
-    삭제하지 못해 죽은 코드로 남아있음. 언젠가 여유 있을 때 정리.
+  - ✅ (2026-11-03) 죽은 코드 `src/ui/tradingview_widget.py` 삭제 완료.
 
 - **Phase 5 Part 3 (포트폴리오 영구 저장 + AI 자동매매 엔진): 완료, 실사용 시작됨** (2026-08-04)
   - ✅ **포트폴리오 영구 저장 (Repository Pattern)** — `src/portfolio/base_repository.py`(인터페이스),
@@ -202,7 +208,32 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
     3. 해당 브로커 구현체(`src/execution/upbit_broker.py` 등) 개발 요청
     4. 초소액(1~5%)으로 1~2주 실전 검증 후 단계적 확대
 
-### 다음 할 일 (Phase 5 Part 4 마무리 — 완료, 1개월 강제 소진 운영 관찰 단계)
+- **Phase 5 Fix (2개월 공백 후 운영 장애 복구): 완료** (2026-11-03)
+  - 🔴 **자동매매 10/28부터 정지** — GitHub는 60일간 커밋이 없으면 스케줄 워크플로를 자동 비활성화한다
+    (마지막 커밋 8/29). 재활성화 + `auto_trade.yml`에 매 실행 keepalive 단계 추가.
+  - 🔴 **`analyze_trading.yml`은 도입 이후 한 번도 동작한 적 없음** — `workflow_run`으로 별도 러너에서
+    돌아 매매 job의 로그 파일에 접근할 수 없었음. 파일 삭제, 분석을 매매 job 안으로 통합하고
+    결과를 Actions 실행 화면 Summary 탭에 출력. 분석 스크립트 자체의 크래시 3종도 수정.
+  - 🔴 **SOFI NaN 매도 사고** — 2026-09-04 Yahoo가 SOFI 종가를 NaN으로 반환 → `price <= 0` 검사는
+    NaN을 못 거름 → 10,931주가 NaN으로 매도되어 보유분은 사라지고 현금은 미반영 → 미국 주식 낙폭
+    -23.4% 고정 → 9/6~10/28 미국 주식 매수 143건 RiskGuard 차단. 재발 방지: YahooFetcher가 NaN 종가 봉
+    제거, AutoTrader가 비정상 현재가면 매매 중단, buy()/sell()이 `math.isfinite` 검사.
+    데이터 복구는 `scripts/repair_2026-09-04_sofi_nan.sql` (**사용자가 Supabase SQL Editor에서 실행 필요**).
+  - 🟡 로그 `Signal.SELL` 표기 수정, Actions checkout v5 / setup-python v6 (Node 20 종료 대응),
+    `tests.yml` CI 신설, 루트 정리(참고자료 → `docs/reference/`).
+  - ✅ pytest **175 passed** (신규 13건).
+  - 📊 **캠페인 결과(로그 기준 8/5~10/28, 765건 분석)**: 매수 30건 중 강제매수 16건(53%),
+    신뢰도 0.55가 71%로 쏠림(HOLD 85%) — AI가 판단을 회피하는 상태. 상세는 `PROGRESS.md` 3장.
+
+### 다음 할 일 (Phase 6 진입 — 2026-11-03 갱신)
+
+1. (사용자) SOFI 복구 SQL 실행 → `python scripts/go_live_report.py`로 최종 성과 확인
+2. AI 신뢰도 캘리브레이션 — 0.55 쏠림 해소 (프롬프트 개선 + 분포 회귀 테스트)
+3. RiskGuard 낙폭을 원가 기준 → 평가금액 기준으로 변경 (원가 기준은 손실 후 영구 차단됨)
+4. 백테스트 엔진 — AI 신호 / 규칙 신호 / Buy&Hold 비교
+5. 캠페인 종료 후 운용 정책 결정 (계속 / 리셋 후 2차 / 중단)
+
+### (이력) Phase 5 Part 4 당시의 다음 할 일 (Phase 5 Part 4 마무리 — 완료, 1개월 강제 소진 운영 관찰 단계)
 
 사용자 목표: **Claude가 직접 한국주식/미국주식/암호화폐에 각 100만원(총 300만원) 가상 투자금으로
 2026-08-04부터 30일 안에 반드시 소진하며 매일 자동으로 페이퍼 트레이딩을 하고, 그 결과를
@@ -219,6 +250,10 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
 4. 다중 사용자 단계로 갈 때 Supabase RLS 정책 설계 (지금은 단일 사용자라 미적용).
 
 ### 알려진 이슈 / 운영 메모
+- **GitHub 60일 규칙**: 저장소에 60일간 활동이 없으면 스케줄 워크플로가 자동 비활성화된다. `auto_trade.yml`의
+  keepalive 단계가 이를 막지만, Actions 탭에 "This scheduled workflow is disabled" 배너가 보이면
+  Actions → AI Auto Trading → "Enable workflow"를 누른다.
+- 클라우드 세션(claude.ai)은 `add_repo`로 저장소를 붙이면 직접 push 가능 (2026-11-03 확인).
 - **로컬(Windows) Git lock 파일 문제가 자주 발생함**: `.git/index.lock`, `.git/HEAD.lock` 등이 남아
   `git commit`/`git push`가 막히는 일이 반복됨 (추정 원인: OneDrive 동기화 또는 백신 프로그램이
   `.git` 폴더를 감시). 발생 시 사용자가 탐색기에서 해당 `.lock` 파일을 수동 삭제해야 진행 가능 —
@@ -228,7 +263,7 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
 
 ### 실행 전 확인 사항
 - Streamlit Cloud: Settings → Secrets에 `ANTHROPIC_API_KEY` 설정 완료 (2026-08-01).
-  Supabase 관련 키(`SUPABASE_URL`, `SUPABASE_KEY`)는 아직 미설정.
+  Supabase 관련 키(`SUPABASE_URL`, `SUPABASE_KEY`)도 등록 완료 (2026-08-04).
 - 로컬 개발 시 `.env`의 `ANTHROPIC_API_KEY` 설정 완료 (2026-07-29, 만료 없음(Never)으로 발급).
 - 샌드박스 환경은 외부 네트워크(Binance API, Anthropic API)가 막혀 있어 실제 데이터/실제 API 호출 검증은
   로컬 PC 또는 Streamlit Cloud에서만 가능. 코드 자체는 mock 기반 pytest로 검증됨(`test_claude_analyzer.py` 등).
@@ -246,11 +281,12 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
 `README.md (YYYY-MM-DD)` / `CLAUDE.md (YYYY-MM-DD)` 형식으로 그날 날짜를 붙인 새 문서를 만드는 방식**으로
 동작한다 (사용자에게 다시 확인받지 않는다). 즉 폴더에는 시간순으로 여러 버전이 쌓이며, 가장 최근 날짜가
 붙은 문서가 최신본이다. 덮어쓰기/삭제 기능이 연결되면 이 방식은 개선한다.
+2026-11-03부터 `PROGRESS.md`도 같은 방식으로 함께 올린다 (최신본: `README.md (2026-11-03)`, `CLAUDE.md (2026-11-03)`, `PROGRESS.md (2026-11-03)`).
 
 ## 8. 참고 자료
 
-루트의 `프로젝트.pdf` / `발표자료_최종_20221169_김규영.pptx` — InvestAI 앱 기획서(학교 과제).
-`20221169 인공지능 최종 과제.py` — 개별 종목 매수/매도 판단 프로토타입(yfinance + RandomForest + TensorFlow).
+`docs/reference/프로젝트.pdf` / `docs/reference/발표자료_최종_20221169_김규영.pptx` — InvestAI 앱 기획서(학교 과제).
+`docs/reference/20221169 인공지능 최종 과제.py` — 개별 종목 매수/매도 판단 프로토타입(yfinance + RandomForest + TensorFlow).
 Phase 3 AI 엔진 설계 시 이 프로토타입의 피처 엔지니어링(RSI, MACD, 볼린저밴드 등)을 참고할 수 있다.
 
 **디자인 시스템 원본**: `프로젝트.pdf`의 5장(프로토타이핑 디자인)에 이미 확정된 디자인 시스템이 있다.
@@ -266,6 +302,7 @@ Phase 3 AI 엔진 설계 시 이 프로토타입의 피처 엔지니어링(RSI, 
 프로젝트 진행 방향(새 기능, 새 화면, 새 플로우)을 정할 때는 텍스트 설명으로만 끝내지 않고,
 **와이어프레임으로 표현하고 Figma/FigJam으로 도식화**해서 눈으로 볼 수 있게 돕는다.
 
+- FigJam 보드: https://www.figma.com/board/1jZsBJwmNW6I6i4orviKNZ — 2026-08 목표 설계(좌측) + **2026-11-03 현재 구현 아키텍처**(우측). 구조가 바뀌면 우측 다이어그램을 갱신한다.
 - 새 화면/플로우를 설계할 때: 저해상도 와이어프레임(박스+레이블 수준)을 먼저 만든다.
 - Figma MCP 연동이 되어 있으면 `get_figjam`/`generate_diagram` 등으로 FigJam 보드나 Figma 디자인에 직접 반영한다.
 - Figma 연동이 안 되어 있으면, 연결을 제안하거나 SVG/HTML 와이어프레임으로 대체 시각화를 제공한다.

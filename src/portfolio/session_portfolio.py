@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing import Optional
 
@@ -48,6 +49,27 @@ def init_portfolio(session_state: dict) -> None:
     if "portfolio" not in session_state:
         get_repository().load_into(session_state)
 
+
+
+def _is_valid_price(price: float) -> bool:
+    """체결 가격이 유한한 양수인지 검사한다.
+
+    `price <= 0` 만으로는 NaN을 걸러내지 못한다(NaN과의 비교는 항상 False).
+
+    Args:
+        price: 검사할 가격.
+
+    Returns:
+        유한한 양수면 True.
+
+    Examples:
+        >>> _is_valid_price(10.0), _is_valid_price(float("nan")), _is_valid_price(0)
+        (True, False, False)
+    """
+    try:
+        return math.isfinite(price) and price > 0
+    except TypeError:
+        return False
 
 def buy(
     session_state: dict,
@@ -82,9 +104,9 @@ def buy(
     init_portfolio(session_state)
     book = session_state["portfolio"][category]
 
-    if price <= 0:
+    if not _is_valid_price(price):
         return False, "가격 정보가 올바르지 않습니다."
-    if amount <= 0:
+    if not math.isfinite(amount) or amount <= 0:
         return False, "매수 금액은 0보다 커야 합니다."
     if amount > book["cash"]:
         return False, f"현금이 부족합니다. (보유 현금: {book['cash']:,.0f})"
@@ -145,6 +167,10 @@ def sell(
     init_portfolio(session_state)
     book = session_state["portfolio"][category]
     holding = book["holdings"].get(symbol)
+
+    # NaN/0 가격으로 매도하면 보유분만 사라지고 현금이 들어오지 않는다 (2026-09-04 SOFI 사고).
+    if not _is_valid_price(price):
+        return False, "가격 정보가 올바르지 않습니다."
 
     if not holding or holding["qty"] <= 0:
         return False, "보유하고 있지 않은 종목입니다."
