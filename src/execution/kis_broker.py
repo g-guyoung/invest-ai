@@ -99,7 +99,7 @@ TR_IDS: dict[str, tuple[str, str]] = {
 US_ORDER_TO_QUOTE_EXCHANGE: dict[str, str] = {"NASD": "NAS", "NYSE": "NYS", "AMEX": "AMS"}
 
 _KR_CODE_RE = re.compile(r"^\d{6}$")
-_US_TICKER_RE = re.compile(r"^[A-Z][A-Z.\-]{0,9}$")
+_US_TICKER_RE = re.compile(r"^[A-Z][A-Z./\-]{0,9}$")
 _TOKEN_EXPIRED_CODES = {"EGW00123", "EGW00121"}
 _RATE_LIMIT_CODE = "EGW00201"
 
@@ -591,6 +591,29 @@ class KisBroker(BaseBroker):
             if str(row.get(key, "")).upper() == code:
                 return _f(row.get(qty_key)), _f(row.get("pchs_avg_pric"))
         return 0.0, 0.0
+
+    def list_positions(self, category: str) -> dict[str, tuple[float, float]]:
+        """계좌의 해당 시장 보유 종목 전체 {심볼: (주문 가능 수량, 평균 매입가)}.
+
+        미국은 거래소(NASD/NYSE/AMEX)별로 조회해 합친다. 첫 페이지(최대 50종목)만 읽는다.
+        """
+        result: dict[str, tuple[float, float]] = {}
+        if category == KR_CATEGORY:
+            for row in self._kr_balance().get("output1") or []:
+                qty = _f(row.get("ord_psbl_qty"))
+                if qty > 0:
+                    result[str(row.get("pdno", "")).upper()] = (qty, _f(row.get("pchs_avg_pric")))
+            return result
+        if category != US_CATEGORY:
+            raise BrokerError(f"KIS 브로커는 한국/미국 주식만 지원합니다: {category}")
+        for exch in US_ORDER_TO_QUOTE_EXCHANGE:
+            for row in self._us_balance(exch).get("output1") or []:
+                qty = _f(row.get("ord_psbl_qty"))
+                sym = str(row.get("ovrs_pdno", "")).upper()
+                if qty > 0 and sym:
+                    result[sym] = (qty, _f(row.get("pchs_avg_pric")))
+                    self._us_exchange_cache.setdefault(sym, exch)
+        return result
 
     def get_holding_qty(self, category: str, symbol: str) -> float:
         """주문 가능 보유 수량."""

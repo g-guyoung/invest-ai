@@ -411,3 +411,19 @@ def test_invalid_constructor_values(tmp_path: Path) -> None:
         make_broker(tmp_path, KR_ROUTES, max_order_krw=0)
     with pytest.raises(BrokerError):
         make_broker(tmp_path, KR_ROUTES, us_slippage_pct=0.2)
+
+
+def test_list_positions_kr(tmp_path: Path) -> None:
+    broker, _ = make_broker(tmp_path, KR_ROUTES)
+    assert broker.list_positions(KR_CATEGORY) == {"005930": (3.0, 70_000.0)}
+
+
+def test_list_positions_us_merges_exchanges_and_caches(tmp_path: Path) -> None:
+    broker, session = make_broker(tmp_path, US_ROUTES, now=US_OPEN)
+    assert broker.list_positions(US_CATEGORY) == {"AAPL": (4.0, 190.5)}
+    assert session.count("GET", "inquire-balance") == 3  # NASD/NYSE/AMEX
+    assert broker.resolve_us_exchange("AAPL") == "NASD"  # 잔고에서 거래소 캐시
+
+
+def test_slash_ticker_allowed() -> None:
+    assert normalize_stock_symbol(US_CATEGORY, "brk/b") == "BRK/B"
