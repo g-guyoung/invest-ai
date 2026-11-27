@@ -8,7 +8,7 @@ src/trading/deployment_pacing.py 에 대한 pytest 테스트.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
 

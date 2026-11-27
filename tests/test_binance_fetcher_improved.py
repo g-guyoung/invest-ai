@@ -4,9 +4,7 @@ Tests for improved BinanceFetcher with BaseFetcher interface.
 """
 
 import pytest
-import pandas as pd
 from unittest.mock import Mock, patch
-from datetime import datetime, timedelta
 
 from src.fetcher.binance_fetcher import BinanceFetcher, BinanceFetcherError
 from src.fetcher.base_fetcher import FetcherError
