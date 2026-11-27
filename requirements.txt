@@ -10,3 +10,4 @@ plotly>=5.18.0
 yfinance>=0.2.32
 supabase>=2.0.0
 psycopg2-binary>=2.9.0
+tzdata>=2024.1  # Windows용 IANA 시간대 DB (주식 장 시간 계산, zoneinfo)

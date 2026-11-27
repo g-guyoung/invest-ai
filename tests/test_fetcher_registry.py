@@ -5,7 +5,7 @@ Tests for FetcherRegistry (multi-market routing).
 
 import pytest
 from src.fetcher.fetcher_registry import FetcherRegistry
-from src.fetcher.base_fetcher import FetcherError, BaseFetcher
+from src.fetcher.base_fetcher import FetcherError
 
 
 class TestFetcherRegistryDetection:

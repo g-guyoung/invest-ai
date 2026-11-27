@@ -18,6 +18,11 @@ data/*.csv
 data/live_bot_state.json
 data/live_bot_log.jsonl
 data/KILL_SWITCH
+data/*.jsonl
+# KIS 접근 토큰 캐시 (data/*.json 규칙으로도 제외되지만 명시)
+data/kis_token_*.json
+# 전 종목 마스터/스크리너 캐시
+data/universe/
 
 # 자동매매 실행 로그/분석 결과 (영구 기록은 Supabase)
 data/*.json

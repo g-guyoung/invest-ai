@@ -72,7 +72,10 @@ class OrderResult:
         message: 결과/실패 사유 메시지.
         request: 원본 주문 요청.
         executed_at: 체결 시각.
-        is_live: 실전 주문이었는지 여부 (감사 추적 필수 필드).
+        is_live: 실전(실제 돈) 주문이었는지 여부 (감사 추적 필수 필드).
+        order_id: 브로커가 부여한 주문번호 (접수된 경우). 미체결 추적/취소에 사용.
+        filled_qty: 확인된 체결 수량 (모르면 0).
+        avg_fill_price: 확인된 평균 체결가 (모르면 0).
     """
 
     success: bool
@@ -80,6 +83,9 @@ class OrderResult:
     request: OrderRequest
     executed_at: datetime = field(default_factory=datetime.now)
     is_live: bool = False
+    order_id: Optional[str] = None
+    filled_qty: float = 0.0
+    avg_fill_price: float = 0.0
 
 
 class BaseBroker(ABC):

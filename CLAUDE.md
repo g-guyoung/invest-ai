@@ -38,6 +38,7 @@ src/
  ├── common/        # 공통 유틸 (retry.py, env_loader.py — .env/Streamlit secrets 통합 로더)
  ├── trading/       # auto_trader.py, deployment_pacing.py, auto_trader_logger.py
  ├── execution/     # base_broker / paper_broker / risk_guard / broker_factory (실전 전환 3중 잠금)
+ │                  # upbit_broker(암호화폐) / kis_broker(한국·미국 주식, 모의투자 기본) / market_hours
  ├── database/      # Supabase 연동 (supabase_client.py) — 실사용 중
  ├── portfolio/     # 가상 포트폴리오 + Repository Pattern (session / supabase)
  └── ui/            # Streamlit 대시보드 (실 사용 화면)
@@ -224,6 +225,17 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
   - ✅ pytest **175 passed** (신규 13건).
   - 📊 **캠페인 결과(로그 기준 8/5~10/28, 765건 분석)**: 매수 30건 중 강제매수 16건(53%),
     신뢰도 0.55가 71%로 쏠림(HOLD 85%) — AI가 판단을 회피하는 상태. 상세는 `PROGRESS.md` 3장.
+
+- **Phase 5 Part 7 (주식 매매 준비 — 한국투자증권 KIS): 완료** (2026-11-27)
+  - `src/execution/kis_broker.py` — 한국(시장가)/미국(시장성 지정가) 주문, 잔고·체결 조회, 토큰 캐시,
+    조회 재시도/주문 재시도 금지, 1회 주문 상한, 화이트리스트, 장외 실주문 차단.
+  - `broker_factory.get_kis_broker()` — `KIS_ENV=vts`(모의투자) 기본, `prod`는 LIVE_TRADING 이중 잠금 필수.
+  - `src/execution/market_hours.py` — KRX/미국 정규장(서머타임 자동), 미완성 일봉 제거. Windows는 `tzdata` 필요.
+  - `src/trading/live_stock_bot.py` — BTC 봇과 같은 돌파 전략+RiskGuard+비상 손절, 시장별 자금 상한.
+  - 운영 절차는 `docs/STOCK_TRADING_RUNBOOK.md`. 사용자 액션: KIS 모의투자 앱키 발급 → `.env` → `--check`.
+  - **전 종목 모드(기본)**: `src/fetcher/kis_master.py`(KIS 종목 마스터 → 코스피·코스닥/NASDAQ·NYSE·AMEX 전체)
+    + `src/strategy/screener.py`(유동성·가격 필터 + 신규 돌파 → 상위 10개). 최대 보유 5종목,
+    봇이 산 종목(`owned`)만 매도 — 수동 보유 종목 보호. `KIS_*_MODE=list`면 지정 종목만.
 
 ### 다음 할 일 (Phase 6 진입 — 2026-11-03 갱신)
 
