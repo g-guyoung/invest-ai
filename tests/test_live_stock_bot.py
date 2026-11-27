@@ -229,9 +229,96 @@ def test_empty_symbols_rejected(tmp_path: Path) -> None:
 
 
 def test_load_market_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KIS_US_MODE", "list")
     monkeypatch.setenv("KIS_US_SYMBOLS", "aapl, nvda")
     monkeypatch.setenv("KIS_US_CAPITAL_USD", "2,000")
     cfg = load_market_config("us")
-    assert cfg.symbols == ("AAPL", "NVDA") and cfg.capital_cap == 2000
+    assert cfg.symbols == ("AAPL", "NVDA") and cfg.capital_cap == 2000 and not cfg.is_universe
     with pytest.raises(ValueError):
         load_market_config("jp")
+
+
+# ----------------------------------------------------------------------
+# 전 종목(universe) 모드
+# ----------------------------------------------------------------------
+
+
+def uni_market(max_positions: int = 2, cap: float = 300_000) -> StockMarketConfig:
+    return StockMarketConfig(key="kr", category=KR_CATEGORY, symbols=(), capital_cap=cap, currency="원",
+                             limits=default_limits(1_000.0), mode="universe", max_positions=max_positions)
+
+
+def uni_bot(tmp_path: Path, broker: FakeBroker, candidates: Any, last: float = 1.0, max_positions: int = 2) -> LiveStockBot:
+    fn = candidates if callable(candidates) else (lambda: list(candidates))
+    return make_bot(tmp_path, broker, last=last, mk=uni_market(max_positions), candidates_fn=fn)
+
+
+def test_universe_buys_screened_candidates_with_slot_budget(tmp_path: Path) -> None:
+    broker = FakeBroker(prices={"005930": 70_000.0, "000660": 100_000.0, "035420": 50_000.0})
+    uni_bot(tmp_path, broker, ["005930", "000660", "035420"]).run_once()
+    assert [o.symbol for o in broker.orders] == ["005930", "000660"]  # 최대 2종목
+    assert broker.orders[0].amount == pytest.approx(150_000 * 0.995)  # 300,000 ÷ 2
+    assert json.loads((tmp_path / "state.json").read_text())["owned"] == ["005930", "000660"]
+
+
+def test_universe_skips_manual_holdings(tmp_path: Path) -> None:
+    broker = FakeBroker(positions={"005930": (5.0, 60_000.0)})
+    decisions = uni_bot(tmp_path, broker, ["005930"], last=0.0).run_once()
+    assert broker.orders == []  # 청산 신호여도 봇이 산 종목이 아니면 팔지 않음
+    assert "수동 투자" in decisions[0].message
+
+
+def test_universe_manages_owned_even_if_not_screened(tmp_path: Path) -> None:
+    (tmp_path / "state.json").write_text(json.dumps({"date": "2026-11-26", "day_start_total": 1,
+                                                     "orders_today": 0, "stop_lock": {}, "owned": ["000660"]}))
+    broker = FakeBroker(positions={"000660": (1.0, 100_000.0)})
+    uni_bot(tmp_path, broker, [], last=0.0).run_once()
+    assert [(o.symbol, o.side) for o in broker.orders] == [("000660", OrderSide.SELL)]
+    assert json.loads((tmp_path / "state.json").read_text())["owned"] == []
+
+
+def test_universe_screening_failure_still_sells(tmp_path: Path) -> None:
+    (tmp_path / "state.json").write_text(json.dumps({"owned": ["000660"]}))
+    broker = FakeBroker(positions={"000660": (1.0, 100_000.0)})
+
+    def boom() -> list[str]:
+        raise RuntimeError("network down")
+
+    decisions = uni_bot(tmp_path, broker, boom, last=0.0).run_once()
+    assert any(d.error and "스크리닝 실패" in d.error for d in decisions)
+    assert [o.side for o in broker.orders] == [OrderSide.SELL]
+
+
+def test_universe_max_positions_counts_existing(tmp_path: Path) -> None:
+    (tmp_path / "state.json").write_text(json.dumps({"owned": ["000660"]}))
+    broker = FakeBroker(positions={"000660": (1.0, 100_000.0)}, prices={"000660": 100_000.0, "005930": 70_000.0})
+    decisions = uni_bot(tmp_path, broker, ["005930"], max_positions=1).run_once()
+    assert broker.orders == []
+    assert any("최대 보유 종목 수" in d.message for d in decisions)
+
+
+def test_universe_no_candidates_no_owned(tmp_path: Path) -> None:
+    decisions = uni_bot(tmp_path, FakeBroker(), []).run_once()
+    assert "후보가 없고" in decisions[0].message
+
+
+def test_universe_mode_is_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ["KIS_KR_MODE", "KIS_KR_SYMBOLS", "KIS_KR_MAX_POSITIONS"]:
+        monkeypatch.delenv(name, raising=False)
+    cfg = load_market_config("kr")
+    assert cfg.is_universe and cfg.max_positions == 5 and cfg.per_symbol_budget == 60_000
+    assert cfg.min_traded_value == 1_000_000_000
+
+
+def test_list_mode_requires_symbols(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("KIS_KR_MODE", "list")
+    monkeypatch.delenv("KIS_KR_SYMBOLS", raising=False)
+    cfg = load_market_config("kr")
+    with pytest.raises(ValueError, match="list 모드"):
+        make_bot(tmp_path, FakeBroker(), mk=cfg)
+
+
+def test_bad_mode_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KIS_US_MODE", "all")
+    with pytest.raises(ValueError, match="universe 또는 list"):
+        load_market_config("us")

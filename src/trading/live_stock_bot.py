@@ -57,6 +57,8 @@ from src.strategy.rule_strategies import DonchianBreakout
 logger = logging.getLogger(__name__)
 
 DATA_DIR = _PROJECT_ROOT / "data"
+MODE_UNIVERSE = "universe"
+MODE_LIST = "list"
 CANDLE_LIMIT = 250  # 약 1년치 일봉 — 돌파 전략 상태를 안정시키기에 충분
 
 
@@ -79,10 +81,16 @@ class StockMarketConfig:
     Attributes:
         key: "kr" | "us" (상태 파일 이름·CLI 인자).
         category: 포트폴리오 카테고리 문자열.
-        symbols: 매매 대상 종목 (한국 6자리 코드 / 미국 티커).
+        symbols: list 모드 = 매매 대상 종목 / universe 모드 = 항상 함께 살펴볼 추가 종목.
         capital_cap: 이 시장에서 봇이 쓸 수 있는 최대 자금 (현지 통화).
         currency: 표시용 통화 단위.
         limits: RiskGuard 한도.
+        mode: "universe"(전 종목 스크리닝, 기본) | "list"(symbols만 매매).
+        max_positions: universe 모드 최대 동시 보유 종목 수 (종목당 예산 = 자금 상한 ÷ 이 값).
+        min_price: universe 모드 최소 주가.
+        min_traded_value: universe 모드 20일 평균 거래대금 하한.
+        max_candidates: universe 모드 스크리너 후보 수.
+        include_etf: universe 모드 ETF 포함 여부.
     """
 
     key: str
@@ -91,6 +99,22 @@ class StockMarketConfig:
     capital_cap: float
     currency: str
     limits: RiskLimits = field(default_factory=RiskLimits)
+    mode: str = MODE_LIST
+    max_positions: int = 5
+    min_price: float = 0.0
+    min_traded_value: float = 0.0
+    max_candidates: int = 10
+    include_etf: bool = False
+
+    @property
+    def is_universe(self) -> bool:
+        return self.mode == MODE_UNIVERSE
+
+    @property
+    def per_symbol_budget(self) -> float:
+        """종목당 매수 예산."""
+        slots = self.max_positions if self.is_universe else max(len(self.symbols), 1)
+        return self.capital_cap / slots
 
 
 def default_limits(min_order_amount: float) -> RiskLimits:
@@ -108,31 +132,57 @@ def _split_symbols(raw: str) -> tuple[str, ...]:
     return tuple(s.strip().upper() for s in (raw or "").split(",") if s.strip())
 
 
+def _env_num(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip().replace(",", "").replace("_", "")
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f".env의 {name} 값이 숫자가 아닙니다: {raw!r}") from exc
+
+
+#: 시장별 기본값: (카테고리, 통화, 자금 상한, 자금 env, 최소 주문, 최소 주가, 최소 거래대금)
+_MARKET_DEFAULTS: dict[str, tuple[str, str, float, str, float, float, float]] = {
+    "kr": (KR_CATEGORY, "원", 300_000.0, "KIS_KR_CAPITAL_KRW", 1_000.0, 1_000.0, 1_000_000_000.0),
+    "us": (US_CATEGORY, "달러", 1_000.0, "KIS_US_CAPITAL_USD", 1.0, 5.0, 20_000_000.0),
+}
+
+
 def load_market_config(key: str) -> StockMarketConfig:
-    """.env에서 시장 설정을 읽는다.
+    """.env에서 시장 설정을 읽는다 (K = KR 또는 US).
 
     .env:
-        KIS_KR_SYMBOLS (기본 "005930"), KIS_KR_CAPITAL_KRW (기본 300000)
-        KIS_US_SYMBOLS (기본 "AAPL,MSFT"), KIS_US_CAPITAL_USD (기본 1000)
+        KIS_K_MODE: universe(전 종목, 기본) | list(KIS_K_SYMBOLS만)
+        KIS_K_SYMBOLS: list 모드 종목 / universe 모드 추가 감시 종목
+        KIS_KR_CAPITAL_KRW(기본 300000) / KIS_US_CAPITAL_USD(기본 1000)
+        KIS_K_MAX_POSITIONS(기본 5), KIS_K_MIN_PRICE(1000원/5달러),
+        KIS_K_MIN_TRADED_VALUE(10억원/2천만 달러), KIS_SCREEN_MAX_CANDIDATES(10),
+        KIS_INCLUDE_ETF(false)
 
     Raises:
-        ValueError: key가 kr/us가 아니거나 숫자 형식 오류.
+        ValueError: key/모드/숫자 형식 오류.
     """
-    if key == "kr":
-        return StockMarketConfig(
-            key="kr", category=KR_CATEGORY,
-            symbols=_split_symbols(os.getenv("KIS_KR_SYMBOLS", "005930")),
-            capital_cap=float(os.getenv("KIS_KR_CAPITAL_KRW", "300000").replace(",", "")),
-            currency="원", limits=default_limits(1_000.0),
-        )
-    if key == "us":
-        return StockMarketConfig(
-            key="us", category=US_CATEGORY,
-            symbols=_split_symbols(os.getenv("KIS_US_SYMBOLS", "AAPL,MSFT")),
-            capital_cap=float(os.getenv("KIS_US_CAPITAL_USD", "1000").replace(",", "")),
-            currency="달러", limits=default_limits(1.0),
-        )
-    raise ValueError(f"market은 kr 또는 us여야 합니다: {key}")
+    if key not in _MARKET_DEFAULTS:
+        raise ValueError(f"market은 kr 또는 us여야 합니다: {key}")
+    category, currency, cap, cap_env, min_order, min_price, min_value = _MARKET_DEFAULTS[key]
+    k = key.upper()
+    mode = os.getenv(f"KIS_{k}_MODE", MODE_UNIVERSE).strip().lower() or MODE_UNIVERSE
+    if mode not in (MODE_UNIVERSE, MODE_LIST):
+        raise ValueError(f"KIS_{k}_MODE는 universe 또는 list여야 합니다: {mode!r}")
+    max_positions = int(_env_num(f"KIS_{k}_MAX_POSITIONS", 5))
+    if max_positions < 1:
+        raise ValueError(f"KIS_{k}_MAX_POSITIONS는 1 이상이어야 합니다.")
+    return StockMarketConfig(
+        key=key, category=category,
+        symbols=_split_symbols(os.getenv(f"KIS_{k}_SYMBOLS", "")),
+        capital_cap=_env_num(cap_env, cap), currency=currency, limits=default_limits(min_order),
+        mode=mode, max_positions=max_positions,
+        min_price=_env_num(f"KIS_{k}_MIN_PRICE", min_price),
+        min_traded_value=_env_num(f"KIS_{k}_MIN_TRADED_VALUE", min_value),
+        max_candidates=int(_env_num("KIS_SCREEN_MAX_CANDIDATES", 10)),
+        include_etf=os.getenv("KIS_INCLUDE_ETF", "").strip().lower() in ("1", "true", "yes"),
+    )
 
 
 @dataclass
@@ -208,9 +258,13 @@ class LiveStockBot:
         fresh_signal_only: bool = False,
         state_file: Optional[Path] = None,
         log_file: Optional[Path] = None,
+        candidates_fn: Optional[Callable[[], list[str]]] = None,
     ) -> None:
-        if not market.symbols:
-            raise ValueError(f"{market.category}: 매매 종목이 비어 있습니다 (.env KIS_{market.key.upper()}_SYMBOLS).")
+        if not market.is_universe and not market.symbols:
+            raise ValueError(
+                f"{market.category}: list 모드인데 매매 종목이 비어 있습니다 "
+                f"(.env KIS_{market.key.upper()}_SYMBOLS 를 채우거나 KIS_{market.key.upper()}_MODE=universe)."
+            )
         if market.capital_cap <= 0:
             raise ValueError(f"{market.category}: 자금 상한은 0보다 커야 합니다.")
         self.broker = broker
@@ -225,6 +279,28 @@ class LiveStockBot:
         self.fresh_signal_only = fresh_signal_only
         self.state_file = state_file or DATA_DIR / f"live_stock_state_{market.key}.json"
         self.log_file = log_file or DATA_DIR / "live_stock_log.jsonl"
+        self._candidates_fn = candidates_fn or self.screen_candidates
+
+    def screen_candidates(self) -> list[str]:
+        """전 종목 스크리닝 → 오늘 신규 진입 후보 심볼 (universe 모드 기본 후보 함수).
+
+        Raises:
+            KisMasterError 등: 종목 목록/시세 수집 실패 (호출 측에서 기록, 매도 관리는 계속).
+        """
+        from src.fetcher.kis_master import KisMasterUniverse
+        from src.strategy.screener import ScreenerConfig, StockScreener
+
+        mk = self.market
+        items = KisMasterUniverse(include_etf=mk.include_etf).load(mk.category)
+        screener = StockScreener(
+            mk.category, self.strategy,
+            ScreenerConfig(
+                min_price=mk.min_price, min_avg_traded_value=mk.min_traded_value,
+                max_price=mk.per_symbol_budget * self.fee_buffer, max_candidates=mk.max_candidates,
+            ),
+            now_fn=self._now_fn, today_fn=self._today_fn,
+        )
+        return [c.symbol for c in screener.screen(items, cache_key=mk.key)]
 
     @property
     def dry_run(self) -> bool:
@@ -238,17 +314,23 @@ class LiveStockBot:
     # 상태 / 로그
     # ------------------------------------------------------------------
 
-    def _load_state(self, current_total: float) -> dict[str, Any]:
-        today = self._today_fn().isoformat()
+    def _read_state(self) -> dict[str, Any]:
         try:
             state = json.loads(self.state_file.read_text(encoding="utf-8"))
         except (FileNotFoundError, ValueError):
-            state = {}
+            return {}
+        return state if isinstance(state, dict) else {}
+
+    def _load_state(self, current_total: float, raw: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        today = self._today_fn().isoformat()
+        state = raw if raw is not None else self._read_state()
         locks = state.get("stop_lock") if isinstance(state.get("stop_lock"), dict) else {}
+        owned = [str(s) for s in state.get("owned", [])] if isinstance(state.get("owned"), list) else []
         if state.get("date") != today:
-            # 날짜가 바뀌면 일일 값만 리셋. 종목별 재진입 잠금은 유지.
+            # 날짜가 바뀌면 일일 값만 리셋. 재진입 잠금과 봇 보유 목록은 유지.
             state = {"date": today, "day_start_total": current_total, "orders_today": 0}
         state["stop_lock"] = locks
+        state["owned"] = owned
         return state
 
     def _save_state(self, state: dict[str, Any]) -> None:
@@ -297,10 +379,30 @@ class LiveStockBot:
             decisions.append(d)
             return
 
+        # 0) 살펴볼 종목 결정
+        raw_state = self._read_state()
+        owned = [str(s) for s in raw_state.get("owned", [])] if isinstance(raw_state.get("owned"), list) else []
+        symbols = list(dict.fromkeys(mk.symbols))
+        if mk.is_universe:
+            candidates: list[str] = []
+            try:
+                candidates = self._candidates_fn()
+            except Exception as exc:  # noqa: BLE001 - 스크리닝 실패해도 보유 종목 관리(매도)는 계속
+                d = self._new_decision()
+                d.error = f"전 종목 스크리닝 실패 (보유 종목 관리만 진행): {type(exc).__name__}: {exc}"
+                decisions.append(d)
+                logger.error(d.error)
+            symbols = list(dict.fromkeys([*owned, *symbols, *candidates]))
+            if not symbols:
+                d = self._new_decision()
+                d.message = "오늘 신규 진입 후보가 없고 봇 보유 종목도 없습니다 — 매매 없음"
+                decisions.append(d)
+                return
+
         # 1) 시장 단위 스냅샷 — 자금 상한/리스크 계산 기준
         cash = self.broker.get_cash(mk.category)
         snapshots: dict[str, StockDecision] = {}
-        for symbol in mk.symbols:
+        for symbol in symbols:
             d = self._new_decision(symbol)
             try:
                 d.price = self.broker.get_price(mk.category, symbol)
@@ -310,11 +412,19 @@ class LiveStockBot:
                 d.error = f"시세/잔고 조회 실패: {exc}"
                 decisions.append(d)
 
+        # universe 모드: 봇이 사지 않은 종목을 계좌에 들고 있으면(수동 투자) 건드리지 않는다.
+        if mk.is_universe:
+            for symbol in [s for s, d in snapshots.items() if d.qty >= 1 and s not in owned]:
+                d = snapshots.pop(symbol)
+                d.message = "봇이 산 종목이 아닌 보유 종목(수동 투자) — 건드리지 않음"
+                decisions.append(d)
+
         cost_basis = sum(d.qty * d.avg_buy_price for d in snapshots.values())
         investable = max(0.0, min(cash, mk.capital_cap - cost_basis))
         current_total = investable + sum(d.qty * d.price for d in snapshots.values())
-        state = self._load_state(current_total)
-        per_symbol = mk.capital_cap / len(mk.symbols)
+        state = self._load_state(current_total, raw_state)
+        per_symbol = mk.per_symbol_budget
+        self._open_positions = sum(1 for d in snapshots.values() if d.qty >= 1)
 
         # 2) 종목별 판단
         for symbol, d in snapshots.items():
@@ -355,6 +465,8 @@ class LiveStockBot:
 
         if target < 0.5:
             locks[d.symbol] = False
+            if not has_position and d.symbol in state["owned"]:
+                state["owned"].remove(d.symbol)  # 미체결로 끝난 매수 기록 정리
             if has_position:
                 self._order(d, state, OrderSide.SELL, 0.0, f"전략 청산 신호 ({self.strategy.describe()})")
             else:
@@ -370,6 +482,9 @@ class LiveStockBot:
         if self.fresh_signal_only and prev >= 0.5:
             d.message = "진행 중인 추세 — 신규 돌파 신호까지 대기(fresh_signal_only)"
             return 0.0
+        if self.market.is_universe and self._open_positions >= self.market.max_positions:
+            d.message = f"최대 보유 종목 수 도달 ({self._open_positions}/{self.market.max_positions}) — 신규 매수 안 함"
+            return 0.0
 
         amount = float(int(min(per_symbol, investable) * self.fee_buffer * 100) / 100)
         verdict = self.risk_guard.check_buy(
@@ -381,6 +496,8 @@ class LiveStockBot:
             d.message = f"🛡️ RiskGuard 차단: {verdict.reason}"
             return 0.0
         executed = self._order(d, state, OrderSide.BUY, amount, f"전략 진입 신호 ({self.strategy.describe()})")
+        if executed:
+            self._open_positions += 1
         return amount if executed else 0.0
 
     def _order(self, d: StockDecision, state: dict[str, Any], side: OrderSide, amount: float, reason: str) -> bool:
@@ -393,6 +510,12 @@ class LiveStockBot:
         d.executed, d.message, d.order_id = result.success, result.message, result.order_id
         if not self.dry_run and (result.success or result.order_id):
             state["orders_today"] = int(state["orders_today"]) + 1  # 미체결 접수도 1건으로 센다
+            # 봇 보유 목록: 매수 접수 시 추가, 매도 체결 시 제거 (universe 모드 수동 종목 보호용)
+            owned: list[str] = state["owned"]
+            if side == OrderSide.BUY and d.symbol not in owned:
+                owned.append(d.symbol)
+            elif side == OrderSide.SELL and result.success and d.symbol in owned:
+                owned.remove(d.symbol)
         return result.success
 
 
@@ -401,15 +524,25 @@ class LiveStockBot:
 # ----------------------------------------------------------------------
 
 
+def _market_line(market: StockMarketConfig) -> str:
+    mode = (
+        f"전 종목 모드(최대 {market.max_positions}종목, 종목당 {market.per_symbol_budget:,.0f}{market.currency})"
+        if market.is_universe else f"지정 종목 모드({', '.join(market.symbols)})"
+    )
+    return f"{market.category} | {mode} | 자금 상한 {market.capital_cap:,.0f}{market.currency}"
+
+
 def _print_check(broker: Any, market: StockMarketConfig) -> int:
-    """연결 점검: 토큰 발급 → 현금 → 종목별 시세/보유 (주문 없음)."""
-    print(f"\n[{market.category}] {broker.mode_label} | 장 운영중={is_market_open(market.category)}")
+    """연결 점검: 토큰 발급 → 현금 → 보유 종목 → 지정 종목 시세 (주문 없음)."""
+    print(f"\n[{broker.mode_label}] {_market_line(market)} | 장 운영중={is_market_open(market.category)}")
     errors = 0
     try:
         print(f"  주문 가능 현금: {broker.get_cash(market.category):,.2f}{market.currency}")
+        held = broker.list_positions(market.category)
+        print(f"  계좌 보유 종목: {', '.join(f'{s} {q:g}주' for s, (q, _) in held.items()) or '없음'}")
     except BrokerError as exc:
         errors += 1
-        print(f"  ❌ 현금 조회 실패: {exc}")
+        print(f"  ❌ 잔고 조회 실패: {exc}")
     for symbol in market.symbols:
         try:
             price = broker.get_price(market.category, symbol)
@@ -421,12 +554,20 @@ def _print_check(broker: Any, market: StockMarketConfig) -> int:
     return errors
 
 
+class _NoBroker:
+    """--scan 전용: 스크리닝은 브로커가 필요 없다."""
+
+    dry_run = True
+    mode_label = "SCAN"
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """CLI 진입점. 기본은 DRY-RUN, --live일 때만 주문 전송 (모의투자/실전은 KIS_ENV가 결정)."""
     parser = argparse.ArgumentParser(description="KIS 주식 봇 — 일봉 돌파 전략 (기본 DRY-RUN)")
     parser.add_argument("--market", choices=["kr", "us", "all"], default="all")
     parser.add_argument("--live", action="store_true", help="주문 전송 (KIS_ENV=vts면 모의투자, prod면 실전+이중 잠금)")
     parser.add_argument("--check", action="store_true", help="연결/잔고/시세 점검만 (주문 없음)")
+    parser.add_argument("--scan", action="store_true", help="전 종목 스크리닝 결과만 출력 (KIS 키 불필요, 주문 없음)")
     parser.add_argument("--fresh-only", action="store_true", help="신규 돌파 신호가 난 날에만 매수")
     args = parser.parse_args(argv)
 
@@ -438,9 +579,30 @@ def main(argv: Optional[list[str]] = None) -> int:
     keys = ["kr", "us"] if args.market == "all" else [args.market]
     try:
         markets = [load_market_config(k) for k in keys]
+    except ValueError as exc:
+        logger.error(str(exc))
+        return 2
+
+    if args.scan:
+        exit_code = 0
+        for market in markets:
+            print(f"\n[SCAN] {_market_line(market)}")
+            try:
+                found = LiveStockBot(broker=_NoBroker(), market=market).screen_candidates()  # type: ignore[arg-type]
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ❌ 스크리닝 실패: {type(exc).__name__}: {exc}")
+                exit_code = 1
+                continue
+            print(f"  오늘 신규 진입 후보 {len(found)}개: {', '.join(found) or '없음'}")
+        return exit_code
+
+    # 전 종목 모드면 화이트리스트 없이 형식 검증만, 지정 종목 모드면 그 종목만 허용.
+    allowed: Optional[list[str]] = None
+    if not any(m.is_universe for m in markets):
         allowed = [s for m in markets for s in m.symbols]
+    try:
         broker = get_kis_broker(dry_run=args.check or not args.live, allowed_symbols=allowed)
-    except (BrokerError, ValueError) as exc:
+    except BrokerError as exc:
         logger.error(str(exc))
         return 2
 
@@ -450,7 +612,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     exit_code = 0
     for market in markets:
         bot = LiveStockBot(broker=broker, market=market, fresh_signal_only=args.fresh_only)
-        print(f"\n[{bot.mode}] {market.category} | {bot.strategy.describe()} | 자금 상한 {market.capital_cap:,.0f}{market.currency}")
+        print(f"\n[{bot.mode}] {_market_line(market)} | {bot.strategy.describe()}")
         for d in bot.run_once():
             tp = "—" if d.target_position is None else ("보유" if d.target_position >= 0.5 else "현금")
             print(f"  {d.symbol or '-'}: 목표={tp} 현재가={d.price:,.2f} 보유={d.qty:g} → "
