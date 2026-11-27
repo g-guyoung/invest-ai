@@ -37,13 +37,13 @@ import sys
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Protocol
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.execution.base_broker import BaseBroker, BrokerError, OrderRequest, OrderSide
+from src.execution.base_broker import BrokerError, OrderRequest, OrderResult, OrderSide
 from src.execution.market_hours import (
     KR_CATEGORY,
     US_CATEGORY,
@@ -58,6 +58,18 @@ logger = logging.getLogger(__name__)
 
 DATA_DIR = _PROJECT_ROOT / "data"
 CANDLE_LIMIT = 250  # 약 1년치 일봉 — 돌파 전략 상태를 안정시키기에 충분
+
+
+class StockBroker(Protocol):
+    """봇이 필요로 하는 브로커 기능 (KisBroker가 구현, 테스트에서는 가짜 브로커)."""
+
+    def place_order(self, request: OrderRequest) -> OrderResult: ...
+
+    def get_cash(self, category: str) -> float: ...
+
+    def get_price(self, category: str, symbol: str) -> float: ...
+
+    def get_position(self, category: str, symbol: str) -> tuple[float, float]: ...
 
 
 @dataclass(frozen=True)
@@ -184,7 +196,7 @@ class LiveStockBot:
 
     def __init__(
         self,
-        broker: BaseBroker,
+        broker: StockBroker,
         market: StockMarketConfig,
         strategy: Optional[BaseStrategy] = None,
         risk_guard: Optional[RiskGuard] = None,

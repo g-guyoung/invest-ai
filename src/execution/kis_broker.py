@@ -666,7 +666,10 @@ class KisBroker(BaseBroker):
             qty = int(request.amount // price)
             if qty < 1:
                 return self._fail(request, f"주문 금액 {request.amount:,.2f}{unit}로는 1주({price:,.2f})도 살 수 없습니다.")
-            cash = self.get_cash(request.category) if is_kr else self._us_buying_power(code, exch, price)
+            cash = (
+                self.get_cash(request.category) if exch is None
+                else self._us_buying_power(code, exch, price)
+            )
             if qty * price > cash:
                 return self._fail(request, f"주문 가능 현금 부족: 필요 {qty * price:,.2f} > 가능 {cash:,.2f}{unit}")
         else:
