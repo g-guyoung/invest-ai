@@ -233,6 +233,9 @@ Phase 5부터 대시보드는 `src/ui/streamlit_app.py`, 멀티마켓 라우팅�
   - `src/execution/market_hours.py` — KRX/미국 정규장(서머타임 자동), 미완성 일봉 제거. Windows는 `tzdata` 필요.
   - `src/trading/live_stock_bot.py` — BTC 봇과 같은 돌파 전략+RiskGuard+비상 손절, 시장별 자금 상한.
   - 운영 절차는 `docs/STOCK_TRADING_RUNBOOK.md`. 사용자 액션: KIS 모의투자 앱키 발급 → `.env` → `--check`.
+  - **전 종목 모드(기본)**: `src/fetcher/kis_master.py`(KIS 종목 마스터 → 코스피·코스닥/NASDAQ·NYSE·AMEX 전체)
+    + `src/strategy/screener.py`(유동성·가격 필터 + 신규 돌파 → 상위 10개). 최대 보유 5종목,
+    봇이 산 종목(`owned`)만 매도 — 수동 보유 종목 보호. `KIS_*_MODE=list`면 지정 종목만.
 
 ### 다음 할 일 (Phase 6 진입 — 2026-11-03 갱신)
 
